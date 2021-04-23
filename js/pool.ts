@@ -1,78 +1,8 @@
-type AccountId = string;
+import { Account } from "./account";
+import { MintableFungibleToken } from "./tokens";
+import { AccountId, OptionalAccount } from "./types";
 
-class MintableFungibleToken {
-  accounts: Map<AccountId, number>;
-  totalSupply: number;
-  outcomeId: number;
-
-  constructor(outcomeId: number, initialSupply: number) {
-    this.outcomeId = outcomeId;
-    this.totalSupply = initialSupply;
-    this.accounts = new Map<AccountId, number>();
-  }
-
-  getBalance(accountId: AccountId): number {
-    return this.accounts.get(accountId) ?? 0;
-  }
-
-  mint(accountId: AccountId, amount: number): void {
-    this.totalSupply += amount;
-    const accountBalance = this.accounts.get(accountId) ?? 0;
-    const newBalance = accountBalance + amount;
-    this.accounts.set(accountId, newBalance);
-
-    console.log(`minted ${amount} new tokens for id=${this.outcomeId}`);
-    console.log(
-      `user ${accountId} new balance for id=${this.outcomeId} is ${newBalance}`
-    );
-  }
-
-  deposit(receiverId: AccountId, amount: number): void | Error {
-    if (amount <= 0) {
-      return new Error("Cannot deposit 0 or lower");
-    }
-
-    const receiverBalance = this.accounts.get(receiverId) ?? 0;
-    const newBalance = receiverBalance + amount;
-
-    this.accounts.set(receiverId, newBalance);
-  }
-
-  withdraw(senderId: AccountId, amount: number): void | Error {
-    const senderBalance = this.accounts.get(senderId) ?? 0;
-
-    if (amount <= 0) {
-      return new Error("Cannot withdraw 0 or lower");
-    }
-    if (amount > senderBalance) {
-      return new Error("Not enough balance");
-    }
-
-    const newBalance = senderBalance - amount;
-    this.accounts.set(senderId, newBalance);
-  }
-
-  safeTransferInternal(
-    senderId: AccountId,
-    receiverId: string,
-    amount: number
-  ): void {
-    this.withdraw(senderId, amount);
-    this.deposit(receiverId, amount);
-  }
-}
-
-class Account {
-  entries: Map<number, number>;
-  lpEntries: Map<number, number>;
-
-  constructor() {
-    this.entries = new Map<number, number>();
-    this.lpEntries = new Map<number, number>();
-  }
-}
-
-class Pool {
+export class Pool {
   outcomes: number;
   outcomeTokens: Map<number, MintableFungibleToken>;
   poolToken: MintableFungibleToken;
@@ -132,9 +62,9 @@ class Pool {
     );
   }
 
-  addLiquidity(sender: AccountId, totalIn: number): Error | void {
+  addLiquidity(sender: AccountId, totalIn: number): void {
     if (totalIn < this.minLiquidityAmount()) {
-      return new Error(`Must add at least ${this.minLiquidityAmount()}`);
+      throw new Error(`Must add at least ${this.minLiquidityAmount()}`);
     }
     const outcomeTokensToReturn: number[] = [];
 
@@ -205,16 +135,14 @@ class Pool {
     this.accounts.set(sender, account);
   }
 
-
-
   mintInternal(to: AccountId, amount: number): void {
     this.beforePoolTokenTransfer(null, to, amount);
     this.poolToken.mint(to, amount);
   }
 
   beforePoolTokenTransfer(
-    from: AccountId | null,
-    to: AccountId | null,
+    from: OptionalAccount,
+    to: OptionalAccount,
     amount: number
   ): number {
     let fees = 0;

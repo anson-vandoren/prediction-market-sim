@@ -1,6 +1,11 @@
 {
   "compilerOptions": {
     "strictNullChecks": true,
-    "strictPropertyInitialization": true
-  }
+    "strictPropertyInitialization": true,
+    "baseUrl": "./js",
+    "paths": {
+      "~*": ["./*"]
+    }
+  },
+  "include": ["js/**/*"]
 }
