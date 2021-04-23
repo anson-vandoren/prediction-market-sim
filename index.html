@@ -47,7 +47,7 @@
                         <th class="th-regular">Invariant</th>
                       </tr>
                     </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
+                    <tbody>
                       <tr>
                         <td id="mktYesTokens"></td>
                         <td id="mktNoTokens"></td>
@@ -55,6 +55,25 @@
                         <td id="mktCurrentFunding"></td>
                         <td id="mktInitialFunding"></td>
                         <td id="mktInvariant"></td>
+                      </tr>
+                    </tbody>
+                    <thead class="bg-gray-50">
+                      <tr>
+                        <th class="th-regular" colspan="2">YES</th>
+                        <th
+                          class="text-lg font-semibold text-gray-900"
+                          colspan="2"
+                        >
+                          Predictions
+                        </th>
+                        <th class="th-regular" colspan="2">NO</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td id="mktProbYes" colspan="2"></td>
+                        <td colspan="2"></td>
+                        <td id="mktProbNo" colspan="2"></td>
                       </tr>
                     </tbody>
                   </table>
@@ -168,7 +187,7 @@
                         <th class="th-regular">Liquidity Provided</th>
                       </tr>
                     </thead>
-                    <tbody class="bg-white divide-y divide-gray-200">
+                    <tbody id="tblParticipants">
                       <tr>
                         <td>Alice</td>
                         <td>0</td>
@@ -222,7 +241,7 @@
                               class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
                             />
                           </div>
-                          <div class="col-span-2 place-self-center">
+                          <div class="col-span-2 place-self-center mt-2">
                             <button
                               type="button"
                               id="newBettorSubmit"
@@ -257,14 +276,15 @@
                     </div>
                   </div>
                   <div class="mt-5 md:mt-0 md:col-span-2">
-                    <div class="shadow overflow-hidden sm:rounded-md">
+                    <!-- Place new bet -->
+                    <div class="shadow overflow-hidden sm:rounded-md mb-6">
                       <div class="px-4 py-5 bg-white">
-                        <div class="grid grid-cols-6 gap-6">
+                        <div class="grid grid-cols-6 gap-4">
                           <div class="col-span-2">
                             <label
                               for="newBetAmt"
                               class="block text-sm font-medium text-gray-700"
-                              >Bet Amount</label
+                              >Amount</label
                             >
                             <div class="mt-1 relative rounded-md shadow-sm">
                               <div
@@ -286,27 +306,115 @@
                             <label
                               for="newBetSide"
                               class="block text-sm font-medium text-gray-700"
-                              >Bet Side</label
+                              >Side</label
                             >
                             <div class="mt-1 relative rounded-md shadow-sm">
                               <select
                                 id="newBetSide"
                                 name="newBetSide"
-                                class="focus:ring-indigo-500 focus:border-indigo-500 block w-full border-transparent bg-transparent text-gray-500 sm:text-sm rounded-md"
+                                class="focus:ring-indigo-500 focus:border-indigo-500 block w-full border-transparent bg-transparent text-gray-900 sm:text-sm rounded-md"
                               >
                                 <option>YES</option>
                                 <option>NO</option>
                               </select>
                             </div>
                           </div>
-                          <div class="col-span-2 place-self-center">
+                          <div class="col-span-2 place-self-center mt-2">
                             <button
                               type="button"
                               id="placeNewBet"
-                              class="py-2 px-4 justify-self-auto mt-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                              class="py-2 px-4 mt-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                             >
                               Place Bet
                             </button>
+                          </div>
+                        </div>
+                        <div class="grid grid-cols-6 gap-6 mt-2">
+                          <div class="col-span-2">
+                            <label
+                              for="newBetParticipant"
+                              class="block text-sm font-medium text-gray-700"
+                              >Participant</label
+                            >
+                            <div class="mt-1 relative rounded-md shadow-sm">
+                              <select
+                                id="newBetParticipant"
+                                name="newBetParticipant"
+                                class="focus:ring-indigo-500 focus:border-indigo-500 block w-full border-transparent bg-transparent text-gray-900 sm:text-sm rounded-md"
+                              ></select>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Add liquidity -->
+                    <div class="shadow overflow-hidden sm:rounded-md">
+                      <div class="px-4 py-5 bg-white">
+                        <div class="grid grid-cols-9 gap-4">
+                          <div class="col-span-3">
+                            <label
+                              for="liquidityAmt"
+                              class="block text-sm font-medium text-gray-700"
+                              >Amount</label
+                            >
+                            <div class="mt-1 relative rounded-md shadow-sm">
+                              <div
+                                class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"
+                              >
+                                <span class="text-gray-500 sm:text-sm">$</span>
+                              </div>
+                              <input
+                                type="text"
+                                name="liquidityAmt"
+                                id="liquidityAmt"
+                                value="10"
+                                class="focus:ring-indigo-500 focus:border-indigo-500 block w-full pl-7 pr-12 sm:text-sm border-gray-300 rounded-md"
+                                placeholder="10.0"
+                              />
+                            </div>
+                          </div>
+                          <div class="col-span-3">
+                            <label
+                              for="liquiditySide"
+                              class="block text-sm font-medium text-gray-700"
+                              >Side</label
+                            >
+                            <div class="mt-1 relative rounded-md shadow-sm">
+                              <select
+                                id="liquiditySide"
+                                name="liquiditySide"
+                                class="focus:ring-indigo-500 focus:border-indigo-500 block w-full border-transparent bg-transparent text-gray-900 sm:text-sm rounded-md"
+                              >
+                                <option>ADD</option>
+                                <option>REMOVE</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div class="col-span-3 place-self-center mt-2">
+                            <button
+                              type="button"
+                              id="changeLiquidity"
+                              class="py-2 px-2 justify-self-auto mt-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                            >
+                              Add Liquidity
+                            </button>
+                          </div>
+                        </div>
+                        <div class="grid grid-cols-6 gap-6 mt-2">
+                          <div class="col-span-2">
+                            <label
+                              for="liquidityParticipant"
+                              class="block text-sm font-medium text-gray-700"
+                              >Participant</label
+                            >
+                            <div class="mt-1 relative rounded-md shadow-sm">
+                              <select
+                                id="liquidityParticipant"
+                                name="liquidityParticipant"
+                                class="focus:ring-indigo-500 focus:border-indigo-500 block w-full border-transparent bg-transparent text-gray-900 sm:text-sm rounded-md"
+                              ></select>
+                            </div>
                           </div>
                         </div>
                       </div>
