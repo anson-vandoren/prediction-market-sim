@@ -1,3 +1,5 @@
+import { Pool } from "./pool";
+
 class Market {
   constructor(fundingAmt = 10) {
     fundingAmt = parseFloat(fundingAmt);
@@ -229,5 +231,23 @@ function init() {
 
 let market = new Market();
 let participants = new Participants("Alice");
+
+console.log("** creating pool **");
+const pool = new Pool(2, 0.02); // 2% swapFee === (swapFee / 10^collateralDecimals)
+
+console.log("** adding $10 liquidity for poolBot **");
+pool.addLiquidity("poolBot", 10, [1, 1]);
+console.log("** adding $5 liquidity for Alice **");
+pool.addLiquidity("alice", 5);
+
+const canBuyFor10Outcome0 = pool.calcBuyAmount(10, 0);
+
+console.log("** Alice buying 10 of outcome 0 **");
+pool.buy("alice", 10, 0);
+pool.sell("alice", 10, 0);
+
+const feesForAlice = pool.getFeesWithdrawable("alice");
+console.log("** Alice exiting the pool **");
+const returned = pool.exitPool("alice", pool.getPoolTokenBalance("alice"));
 
 window.onload = init;

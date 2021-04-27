@@ -35,6 +35,43 @@ export class MintableFungibleToken {
     );
   }
 
+  /**
+   * destroys `amount` tokens for this outcome that were previously held by `accountId`
+   * @param {AccountId} accountId
+   * @param {number} amount
+   */
+  burn(accountId: AccountId, amount: number): void {
+    const balance = this.accounts.get(accountId) ?? 0;
+    if (balance < amount) {
+      throw new Error(
+        `cannot burn ${amount} of ${this.outcomeId} token, only have ${balance}`
+      );
+    }
+
+    this.accounts.set(accountId, balance - amount);
+    this.totalSupply -= amount;
+
+    console.log(`user ${accountId} burned ${amount} tokens`);
+  }
+
+  /**
+   * removes `accountId` from this token and returns the balance.
+   * tokens are neither minted nor burned, but caller must ensure tokens
+   * are appropriately transferred after this function returns.
+   *
+   * equivalent to `withdraw(accountId, getBalance(accountId))` followed by removing the empty account
+   * @param {AccountId} accountId
+   * @returns {number}: balance of this token accountId possessed before removal
+   */
+  removeAccount(accountId: AccountId): number {
+    const account = this.accounts.get(accountId);
+    if (!account) {
+      throw new Error(`cannot remove accountId=${accountId} - doesn't exist`);
+    }
+    this.accounts.delete(accountId);
+    return account;
+  }
+
   deposit(receiverId: AccountId, amount: number): void {
     if (amount <= 0) {
       throw new Error("Cannot deposit 0 or lower");

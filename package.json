@@ -21,5 +21,9 @@
     "postcss": "^8.2.10",
     "tailwindcss": "^2.1.1",
     "typescript": "^4.2.4"
+  },
+  "dependencies": {
+    "@fvictorio/newton-raphson-method": "^1.0.5",
+    "big.js": "^6.0.3"
   }
 }
