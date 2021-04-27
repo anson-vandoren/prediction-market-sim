@@ -9,14 +9,14 @@ const MIN_OUTCOMES = 2;
 const MAX_OUTCOMES = 2; // may increase this later
 
 export class Pool {
-  outcomes: number;
-  outcomeTokens: Map<number, MintableFungibleToken>;
-  poolToken: MintableFungibleToken;
-  swapFee: number;
-  withdrawnFees: Map<AccountId, number>;
-  totalWithdrawnFees: number;
-  feePoolWeight: number;
-  resolutionEscrow: ResolutionEscrows;
+  outcomes: number; // number of outcomes for this pool
+  outcomeTokens: Map<number, MintableFungibleToken>; // map of outcomeId -> Token for each outcome
+  poolToken: MintableFungibleToken; // the liquidity pool token
+  swapFee: number; // transaction fee associated with buying/selling outcome tokens (between 0-1)
+  withdrawnFees: Map<AccountId, number>; // pool fees already withdrawn on a per-liquidity-provider basis
+  totalWithdrawnFees: number; // total of all fees withdrawn by liquidity providers from the pool
+  feePoolWeight: number; // TODO: need to figure out precisely what this is and probably name it better
+  resolutionEscrow: ResolutionEscrows; // details about users of this pool
 
   constructor(outcomes: number, swapFee: number) {
     if (outcomes < MIN_OUTCOMES) {
@@ -26,13 +26,19 @@ export class Pool {
         `must have no more than ${MAX_OUTCOMES} outcomes for the pool`
       );
     }
-    if (swapFee !== 0 && !(swapFee < 0.05 && swapFee >= 0.01)) {
-      throw new Error(`invalid swap fee ${swapFee}`);
+    if (swapFee < 0 || swapFee >= 1) {
+      throw new Error(`invalid swap fee ${swapFee}. Must be in [0, 1)`);
     }
 
-    this.swapFee = swapFee ?? 0;
+    this.swapFee = swapFee;
     this.outcomes = outcomes;
-    this.outcomeTokens = new Map<number, MintableFungibleToken>();
+    this.outcomeTokens = new Map<number, MintableFungibleToken>(
+      Array.from(Array(outcomes).keys()).map((outcomeId) => [
+        outcomeId,
+        new MintableFungibleToken(outcomeId, 0),
+      ])
+    );
+    console.log(this.outcomeTokens);
     this.poolToken = new MintableFungibleToken(outcomes, 0);
     this.withdrawnFees = new Map<AccountId, number>();
     this.feePoolWeight = 0;
@@ -51,7 +57,7 @@ export class Pool {
    * @param {number} outcome: index of outcome of interest
    * @returns {number}: current balance of `outcome` tokens owned by `accountId`
    */
-  getShareBalance(accountId: AccountId, outcome: number): number {
+  getOutcomeBalance(accountId: AccountId, outcome: number): number {
     return this.outcomeTokens.get(outcome)?.getBalance(accountId) ?? 0;
   }
 
@@ -166,9 +172,10 @@ export class Pool {
         spentOnReturnedTokens
       );
 
-      const outcomeToken =
-        this.outcomeTokens.get(outcomeIdx) ??
-        new MintableFungibleToken(outcomeIdx, 0);
+      const outcomeToken = this.outcomeTokens.get(outcomeIdx);
+      if (!outcomeToken) {
+        throw new Error(`expected to already have a token for ${outcomeIdx}`);
+      }
 
       // adding $10 liquidity means 10 tokens for each outcome are minted
       outcomeToken.mint(this.getOwnAccount(), totalIn);
@@ -526,7 +533,6 @@ export class Pool {
   ): number {
     this.assertValidOutcome(outcomeTarget);
     // TODO: this isn't right
-    this isn't right'
     const sharesIn = this.calcCollateralReturnedForSellingOutcome(
       amountOut,
       outcomeTarget
@@ -612,9 +618,9 @@ export class Pool {
     return toEscrow;
   }
 
-  sellByOutcomeTokens(sender: AccountId, sharesIn: number, outcomeTarget: number): number {
+  // sellByOutcomeTokens(sender: AccountId, sharesIn: number, outcomeTarget: number): number {
 
-  }
+  // }
 
   addToPools(amount: number): void {
     if (this.outcomeTokens.size !== this.outcomes) {
