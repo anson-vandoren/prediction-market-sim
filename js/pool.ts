@@ -19,13 +19,13 @@ export class Pool {
   resolutionEscrow: ResolutionEscrows; // details about users of this pool
 
   constructor(outcomes: number, swapFee: number) {
-    if (outcomes < MIN_OUTCOMES) {
-      throw new Error(`must have at least ${MIN_OUTCOMES} outcomes for a pool`);
-    } else if (outcomes > MAX_OUTCOMES) {
+    // bounds-check outcomes
+    if (outcomes < MIN_OUTCOMES || outcomes > MAX_OUTCOMES) {
       throw new Error(
-        `must have no more than ${MAX_OUTCOMES} outcomes for the pool`
+        `must have between ${MIN_OUTCOMES} and ${MAX_OUTCOMES} outcomes for a pool`
       );
     }
+    // bounds-check swapFee
     if (swapFee < 0 || swapFee >= 1) {
       throw new Error(`invalid swap fee ${swapFee}. Must be in [0, 1)`);
     }
@@ -38,12 +38,12 @@ export class Pool {
         new MintableFungibleToken(outcomeId, 0),
       ])
     );
-    console.log(this.outcomeTokens);
     this.poolToken = new MintableFungibleToken(outcomes, 0);
     this.withdrawnFees = new Map<AccountId, number>();
     this.feePoolWeight = 0;
     this.totalWithdrawnFees = 0;
     this.resolutionEscrow = new ResolutionEscrows();
+    logger.logPool(this);
   }
 
   getOwnAccount(): AccountId {
@@ -74,20 +74,20 @@ export class Pool {
    * array of outcome token balances currently in the pool
    * @returns {number[]}: number of each outcome token held by the pool
    */
-  getPoolBalances(): number[] {
-    return Array.from(this.outcomeTokens.values()).map(
-      (token: MintableFungibleToken) => {
-        return token.getBalance(this.getOwnAccount());
-      }
+  getOutcomeBalances(): number[] {
+    return Array.from(
+      this.outcomeTokens.values()
+    ).map((token: MintableFungibleToken) =>
+      token.getBalance(this.getOwnAccount())
     );
   }
 
   addLiquidity(
     sender: AccountId,
-    totalIn: number,
+    collateralIn: number,
     weightIndication?: number[]
   ): void {
-    if (totalIn < this.minLiquidityAmount()) {
+    if (collateralIn < this.minLiquidityAmount()) {
       throw new Error(`Must add at least ${this.minLiquidityAmount()}`);
     }
     const outcomeTokensToReturn: number[] = [];
@@ -95,7 +95,7 @@ export class Pool {
     let toMint: number;
     if (this.poolToken.totalSupply === 0) {
       // new pool, need to set weights
-      if (weightIndication == null) {
+      if (!weightIndication) {
         throw new Error("must provide weights for new pool");
       }
       if (weightIndication.length !== this.outcomes) {
@@ -103,45 +103,58 @@ export class Pool {
           `invalid weights - expected ${this.outcomes} but got ${weightIndication.length}`
         );
       }
+
+      // for the highest weight (most likely outcome), return no tokens
+      // if tokens are equally weighted at the start, also return no tokens
+      // return a portion of less likely outcome tokens to the liquidity provider
       const maxWeight = Math.max(...weightIndication);
       weightIndication.forEach((weight) => {
-        const remaining = totalIn * (weight / maxWeight);
-        outcomeTokensToReturn.push(totalIn - remaining);
+        const toLeaveInPool = collateralIn * (weight / maxWeight);
+        const toReturnToSender = collateralIn - toLeaveInPool;
+        outcomeTokensToReturn.push(toReturnToSender);
       });
-      toMint = totalIn;
+      toMint = collateralIn;
     } else {
-      // the pool is already created, otherwise would need to create starting weights
+      // the pool is already created
       if (weightIndication) {
         throw new Error(
           "pool is already initialized, cannot set weight indications"
         );
       }
-      const outcomeBalances: number[] = this.getPoolBalances();
-      const highestOutcomeBalance: number = Math.max(...outcomeBalances);
-      const poolSupply: number = this.poolToken.totalSupply;
+      const outcomeBalances = this.getOutcomeBalances();
+      const maxOutcomeBalance = Math.max(...outcomeBalances);
+      const poolSupply = this.poolToken.totalSupply;
 
       outcomeBalances.forEach((outcomeBalance) => {
-        const remaining = (totalIn * outcomeBalance) / highestOutcomeBalance;
+        // when providing liquidity, don't want to change the odds of the pool, so need to
+        // return some of the less-likely token(s) to maintain the same ratio
+        const leaveInPool = (collateralIn * outcomeBalance) / maxOutcomeBalance;
+        const returnToSender = collateralIn - leaveInPool;
         // for highest balance outcome token, remaining === totalIn, so outcomeTokensToReturn[highestBalanceOutcome] === 0
         // for the other outcome token, return totalIn(1 - thisOutcomeTokens/otherOutcomeTokens), for 2-outcome pool
         // no outcome tokens will be returned if the outcomes are evenly matched, otherwise some of the more
         // likely outcome token(s) will be returned
         // TODO: still not sure this logic is correct - only returns the most likely outcome token instead of some of each
         //       maybe instead it's supposed to be divided by total instead of highest?
-        outcomeTokensToReturn.push(totalIn - remaining);
+        outcomeTokensToReturn.push(returnToSender);
       });
 
-      toMint = (totalIn * poolSupply) / highestOutcomeBalance;
+      // TODO: I think this is essentially tracking how far the pool has drifted from initial weights, but need to investigate further
+      toMint = (collateralIn * poolSupply) / maxOutcomeBalance;
     }
 
-    this.mintAndTransferOutcomeToken(sender, totalIn, outcomeTokensToReturn);
-    this.mintInternal(sender, toMint);
+    this.mintAndTransferOutcomeToken(
+      sender,
+      collateralIn,
+      outcomeTokensToReturn
+    );
+    this.mintPoolTokens(sender, toMint);
 
     logger.logPool(this);
     logger.logTransaction(
       logger.TransactionType.AddLiquidity,
       sender,
-      totalIn,
+      collateralIn,
       toMint,
       this.outcomes
     );
@@ -193,7 +206,7 @@ export class Pool {
   }
 
   exitPool(sender: AccountId, poolTokensToExit: number): number {
-    const balances = this.getPoolBalances();
+    const balances = this.getOutcomeBalances();
     const poolTokenSupply = this.poolToken.totalSupply;
     const senderPoolTokenBalance = this.poolToken.getBalance(sender);
 
@@ -286,7 +299,7 @@ export class Pool {
     );
   }
 
-  mintInternal(to: AccountId, amount: number): void {
+  mintPoolTokens(to: AccountId, amount: number): void {
     this.beforePoolTokenTransfer(null, to, amount);
     this.poolToken.mint(to, amount);
   }
@@ -419,7 +432,7 @@ export class Pool {
   calcBuyAmount(collateralIn: number, targetOutcomeId: number): number {
     this.assertValidOutcome(targetOutcomeId);
 
-    const outcomeBalances = this.getPoolBalances();
+    const outcomeBalances = this.getOutcomeBalances();
     if (collateralIn === 0 || outcomeBalances.every((x) => x === 0)) {
       return 0;
     }
@@ -451,7 +464,7 @@ export class Pool {
     if (!token) {
       throw new Error(`outcome '${token}' does not exist - cannot sell`);
     }
-    const outcomeBalances = this.getPoolBalances();
+    const outcomeBalances = this.getOutcomeBalances();
     const tokensToSellBig = new Big(tokensToSell.toString());
     const sellTokenBalanceBig = new Big(outcomeBalances[outcomeId].toString());
     const otherTokenBalancesBig = outcomeBalances
