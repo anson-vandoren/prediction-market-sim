@@ -3,7 +3,10 @@
     "@babel/plugin-proposal-class-properties",
     "@babel/proposal-object-rest-spread"
   ],
-  "presets": [
-    "@babel/env", "@babel/typescript"
-  ]
+  "presets": ["@babel/env", "@babel/typescript"],
+  "env": {
+    "test": {
+      "presets": [["env", { "targets": { "node": true } }]]
+    }
+  }
 }

@@ -1,5 +1,10 @@
 import { AccountId } from "./types";
 
+export enum Outcome {
+  NO,
+  YES,
+}
+
 /**
  * represents an account's balance in a certain outcome, or share of the pool's provided liquidity
  */

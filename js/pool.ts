@@ -6,7 +6,7 @@ import { Big } from "big.js";
 import { logger } from "./logger";
 
 const MIN_OUTCOMES = 2;
-const MAX_OUTCOMES = 2; // may increase this later
+const MAX_OUTCOMES = 3; // may increase this later
 
 export class Pool {
   outcomes: number; // number of outcomes for this pool
@@ -82,6 +82,12 @@ export class Pool {
     );
   }
 
+  /**
+   *
+   * @param {AccountId} sender
+   * @param {number} collateralIn
+   * @param {number[]} weightIndication: higher weight implies lower probability
+   */
   addLiquidity(
     sender: AccountId,
     collateralIn: number,
@@ -104,9 +110,9 @@ export class Pool {
         );
       }
 
-      // for the highest weight (most likely outcome), return no tokens
+      // for the highest weight (least likely outcome), return no tokens
       // if tokens are equally weighted at the start, also return no tokens
-      // return a portion of less likely outcome tokens to the liquidity provider
+      // return a portion of more likely outcome tokens to the liquidity provider
       const maxWeight = Math.max(...weightIndication);
       weightIndication.forEach((weight) => {
         const toLeaveInPool = collateralIn * (weight / maxWeight);
@@ -736,64 +742,68 @@ export class Pool {
     return 0.01;
   }
 
+  /**
+   * returns the cost to buy one marginal outcome token, including the fee
+   * @param {number} targetOutcome
+   * @returns {number}
+   */
   getSpotPrice(targetOutcome: number): number {
-    let oddsWeightForTarget = 0;
-    let oddsWeightSum = 0;
-
-    this.outcomeTokens.forEach((_, outcomeId) => {
-      const weightForOutcome = this.getOddsWeightForOutcome(outcomeId);
-      oddsWeightSum += weightForOutcome;
-
-      if (outcomeId === targetOutcome) {
-        oddsWeightForTarget = weightForOutcome;
-      }
-    });
-
-    const ratio = oddsWeightForTarget / oddsWeightSum;
-    const scale = 1 / (1 - this.swapFee);
-
-    return ratio * scale;
+    return this.getSpotPriceSansFee(targetOutcome) / (1 - this.swapFee);
   }
 
+  /**
+   * returns the current price (equivalent to odds) for a given outcome, but
+   * does not include the fees - i.e., price will actually be higher
+   * @param {number} targetOutcome
+   * @returns {number}
+   */
   getSpotPriceSansFee(targetOutcome: number): number {
-    let oddsWeightForTarget = 0;
-    let oddsWeightSum = 0;
-
-    this.outcomeTokens.forEach((_, outcomeId) => {
-      const weightForOutcome = this.getOddsWeightForOutcome(outcomeId);
-
-      oddsWeightSum += weightForOutcome;
-
-      if (outcomeId === targetOutcome) {
-        oddsWeightForTarget = weightForOutcome;
-      }
-    });
-
-    if (oddsWeightSum === 0) {
-      return 0;
-    }
-    return oddsWeightForTarget / oddsWeightSum;
+    // https://docs.gnosis.io/conditionaltokens/docs/introduction3/
+    // oddsForOutcome = oddsWeightForOutcome / sum(oddsWeightForOutcome for every outcome)
+    // const weights = this.getOutcomeBalances().map((_, outcomeId) =>
+    //   this.oddsWeightForOutcome(outcomeId)
+    // );
+    const weights = [...this.outcomeTokens.keys()].map((_, outcomeId) =>
+      this.oddsWeightForOutcome(outcomeId)
+    );
+    const summedWeights = weights.reduce((sum, weight) => sum + weight);
+    return summedWeights === 0 ? 0 : weights[targetOutcome] / summedWeights;
   }
 
-  getOddsWeightForOutcome(targetOutcome: number): number {
-    let oddsWeightForTarget = 0;
-    this.outcomeTokens.forEach((token, outcomeId) => {
-      if (outcomeId !== targetOutcome) {
-        const balance = token.getBalance(this.getOwnAccount());
-        oddsWeightForTarget =
-          oddsWeightForTarget === 0 ? balance : oddsWeightForTarget * balance;
-      }
-    });
-
-    return oddsWeightForTarget;
+  /**
+   * weighting for this outcome, used in odds calculation
+   * @param {number} targetOutcomeId the outcomeId of interest
+   * @returns {number} the weight for this outcome
+   */
+  oddsWeightForOutcome(targetOutcomeId: number): number {
+    // oddsWeightForOutcome = product(...numOutcomeTokensInInventoryForEveryOtherOutcome)
+    // https://docs.gnosis.io/conditionaltokens/docs/introduction3/
+    return this.getOutcomeBalances().reduce(
+      (productOfOtherBalances, thisOutcomeBalance, thisOutcomeId) => {
+        if (thisOutcomeId === targetOutcomeId) {
+          // ignore the balance of the token of interest
+          return productOfOtherBalances;
+        }
+        // if product is zero (i.e., this is the first other balance considered)
+        // then return this balance
+        // otherwise multiply by other balances
+        return (
+          productOfOtherBalances * thisOutcomeBalance || thisOutcomeBalance
+        );
+      },
+      0
+    );
   }
 
+  /**
+   * throws if outcomeId isn't a valid outcome for this pool
+   * @param {number} outcomeId
+   */
   assertValidOutcome(outcomeId: number) {
-    if (outcomeId < 0 || outcomeId >= this.outcomes) {
-      throw new Error(
-        `invalid outcome - index '${outcomeId}' must be between 0 and ${
-          this.outcomes - 1
-        }`
+    const maxOutcome = this.outcomes - 1;
+    if (outcomeId < 0 || outcomeId > maxOutcome) {
+      throw new RangeError(
+        `invalid outcome - index '${outcomeId}' must be between 0 and ${maxOutcome}`
       );
     }
   }
