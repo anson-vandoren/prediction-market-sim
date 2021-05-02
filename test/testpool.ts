@@ -3,7 +3,7 @@ import { expect } from "chai";
 import "mocha";
 import { Outcome } from "../js/tokens";
 
-describe("assertValidOutcome throws only when outcome is invalid", () => {
+describe("assertValidOutcome", () => {
   const numOutcomes = 2;
   const pool = new Pool(numOutcomes, 0);
   it("should throw for outcomes < 0", () => {
@@ -22,7 +22,7 @@ describe("assertValidOutcome throws only when outcome is invalid", () => {
   });
 });
 
-describe("oddsWeightForOutcome is calculated correctly", () => {
+describe("oddsWeightForOutcome", () => {
   it("should return other tokens balance for 2 tokens", () => {
     const pool = new Pool(2, 0);
     const eachTokenBalance = 10;
@@ -36,7 +36,7 @@ describe("oddsWeightForOutcome is calculated correctly", () => {
     otherTokenBal = pool.getOutcomeBalances()[1];
     expect(pool.oddsWeightForOutcome(0)).to.equal(otherTokenBal);
   });
-  it("should return product of other tokens for >2 outcomes", () => {
+  it("should return product of other tokens for > 2 outcomes", () => {
     const pool = new Pool(3, 0);
     pool.addLiquidity("alice", 20, [1, 1, 1]);
 
@@ -46,8 +46,8 @@ describe("oddsWeightForOutcome is calculated correctly", () => {
   });
 });
 
-describe("getSpotPriceSansFee calculates correct odds", () => {
-  it("gives even odds for new even pool with 2 outcomes", () => {
+describe("getSpotPriceSansFee", () => {
+  it("gives equal price for new balanced pool with 2 outcomes", () => {
     const pool = new Pool(2, 0);
     pool.addLiquidity("alice", 10, [1, 1]);
     const oddsForFirst = pool.getSpotPriceSansFee(0);
@@ -77,7 +77,7 @@ describe("getSpotPriceSansFee calculates correct odds", () => {
   });
 });
 
-describe("getSpotPrice correctly includes fees", () => {
+describe("getSpotPrice", () => {
   it("does not include a zero fee", () => {
     const numOutcomes = 2;
     const pool = new Pool(numOutcomes, 0);
@@ -104,6 +104,117 @@ describe("getSpotPrice correctly includes fees", () => {
     );
     odds.forEach((theseOdds) => {
       expect(theseOdds).to.equal(expectedPrice);
+    });
+  });
+});
+
+describe("addToPools", () => {
+  it("adds to totalSupply for every outcome", () => {
+    const numOutcomes = 3;
+    const pool = new Pool(numOutcomes, 0);
+    const initialAmts = [...pool.outcomeTokens.values()].map((token) => {
+      return token.totalSupply;
+    });
+    const amtToAdd = 11;
+    pool.addToPools(amtToAdd);
+    pool.outcomeTokens.forEach((token, outcomeId) => {
+      expect(token.totalSupply).to.equal(initialAmts[outcomeId] + amtToAdd);
+    });
+  });
+  it("assigns new tokens to pool owner", () => {
+    const numOutcomes = 2;
+    const pool = new Pool(numOutcomes, 0);
+
+    const otherProvider = "alice";
+    pool.addLiquidity(otherProvider, 3, [1, 2]);
+    const poolOwnedAmounts = [...pool.outcomeTokens.values()].map((token) =>
+      token.getBalance(pool.getOwnAccount())
+    );
+
+    const amtToAdd = 7;
+    pool.addToPools(amtToAdd);
+    pool.outcomeTokens.forEach((token, outcomeId) => {
+      expect(token.getBalance(pool.getOwnAccount())).to.equal(
+        poolOwnedAmounts[outcomeId] + amtToAdd
+      );
+    });
+  });
+  it("does not change other account amounts", () => {
+    const numOutcomes = 3;
+    const pool = new Pool(numOutcomes, 0);
+    const otherProvider = "bob";
+    pool.addLiquidity(otherProvider, 20, [1, 1, 4]);
+    const otherOwnedAmounts = [...pool.outcomeTokens.values()].map((token) =>
+      token.getBalance(otherProvider)
+    );
+
+    const amtToAdd = 7;
+    pool.addToPools(amtToAdd);
+
+    pool.outcomeTokens.forEach((token, outcomeId) => {
+      expect(token.getBalance(otherProvider)).to.equal(
+        otherOwnedAmounts[outcomeId]
+      );
+    });
+  });
+});
+
+describe("removeFromPools", () => {
+  const pool = new Pool(2, 0);
+  const provider = "alice";
+  pool.addLiquidity(provider, 1, [1, 1]);
+  let initialPoolAmts: number[];
+  let initialTotalSupplies: number[];
+  let initialProviderAmts: number[];
+
+  beforeEach(() => {
+    initialPoolAmts = [];
+    initialTotalSupplies = [];
+    initialProviderAmts = [];
+    pool.addLiquidity(provider, 10);
+    pool.outcomeTokens.forEach((token) => {
+      initialPoolAmts.push(token.getBalance(pool.getOwnAccount()));
+      initialTotalSupplies.push(token.totalSupply);
+      initialProviderAmts.push(token.getBalance(provider));
+    });
+  });
+
+  it("removes totalSupply for every outcome", () => {
+    const toRemove = 5;
+    pool.removeFromPools(toRemove);
+    pool.outcomeTokens.forEach((token, outcomeId) => {
+      expect(token.totalSupply).to.equal(
+        initialTotalSupplies[outcomeId] - toRemove
+      );
+    });
+  });
+  it("removes outcome tokens from pool owner", () => {
+    const toRemove = 10;
+    pool.removeFromPools(toRemove);
+    pool.outcomeTokens.forEach((token, outcomeId) => {
+      expect(token.getBalance(pool.getOwnAccount())).to.equal(
+        initialPoolAmts[outcomeId] - toRemove
+      );
+    });
+  });
+  it("does not change other account balances", () => {
+    const toRemove = 10;
+    pool.removeFromPools(toRemove);
+    pool.outcomeTokens.forEach((token, outcomeId) => {
+      expect(token.getBalance(provider)).to.equal(
+        initialProviderAmts[outcomeId]
+      );
+    });
+  });
+});
+
+describe("a new pool", () => {
+  it("has a zero-supply token for each outcome", () => {
+    const numTokens = 3;
+    const pool = new Pool(numTokens, 0);
+    expect(pool.outcomeTokens.size).to.equal(numTokens);
+    pool.outcomeTokens.forEach((token) => {
+      expect(token.totalSupply).to.equal(0);
     });
   });
 });

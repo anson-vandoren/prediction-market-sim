@@ -33,7 +33,7 @@ export class Pool {
     this.swapFee = swapFee;
     this.outcomes = outcomes;
     this.outcomeTokens = new Map<number, MintableFungibleToken>(
-      Array.from(Array(outcomes).keys()).map((outcomeId) => [
+      [...Array(outcomes).keys()].map((outcomeId) => [
         outcomeId,
         new MintableFungibleToken(outcomeId, 0),
       ])
@@ -716,19 +716,21 @@ export class Pool {
     return payout + feesEarned;
   }
 
+  /**
+   * mints `amount` new tokens for each outcome and assigns them to the pool
+   * @param {number} amount
+   */
   addToPools(amount: number): void {
-    if (this.outcomeTokens.size !== this.outcomes) {
-      throw new Error("not all outcome tokens have been created yet");
-    }
     this.outcomeTokens.forEach((token) => {
       token.mint(this.getOwnAccount(), amount);
     });
   }
 
+  /**
+   * burns `amount` tokens for each outcome from pool's balances
+   * @param {number} amount
+   */
   removeFromPools(amount: number): void {
-    if (this.outcomeTokens.size !== this.outcomes) {
-      throw new Error("not all outcome tokens have been created yet");
-    }
     this.outcomeTokens.forEach((token) => {
       token.burn(this.getOwnAccount(), amount);
     });
