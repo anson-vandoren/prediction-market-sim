@@ -228,19 +228,21 @@ export class Pool {
       // since liquidity tokens are being converted to outcome tokens, update for collateral spent on outcome tokens
       escrowAccount.lpOnExit(outcomeIdx, spentOnExitShares);
 
+      // TODO: just before resolution, is it possible to add a bunch of liquidity, assuming there is
+      //       a non-negligible of the expected winning outcome left, to receive the majority
+      //       of the remaining winning outcome tokens?
+      //       A: probably not, because $1 doesn't get 1 LP token (although $1 should get some of the
+      //       winning outcome token when provided as liquidity)
       const sendOut = (poolTokensToExit / poolTokenSupply) * outcomeBalance;
 
       // transfer the outcome token to the user in return for their liquidity tokens
       const token = this.outcomeTokens.get(outcomeIdx);
       // token must exist because it was retrieved in `this.getPoolBalances()`
       token!.safeTransferInternal(this.getOwnAccount(), sender, sendOut);
-      this.outcomeTokens.set(outcomeIdx, token!);
     });
 
-    this.resolutionEscrow.set(sender, escrowAccount);
-
     // burn liquidity tokens that are exited
-    return this.burnInternal(sender, poolTokensToExit);
+    return this.burnPoolTokensReturnFees(sender, poolTokensToExit);
   }
 
   burnOutcomeTokensRedeemCollateral(sender: AccountId, toBurn: number): number {
@@ -304,7 +306,7 @@ export class Pool {
     this.poolToken.mint(to, amount);
   }
 
-  burnInternal(from: AccountId, amount: number): number {
+  burnPoolTokensReturnFees(from: AccountId, amount: number): number {
     const fees = this.beforePoolTokenTransfer(from, null, amount);
     this.poolToken.burn(from, amount);
     return fees;
@@ -500,11 +502,46 @@ export class Pool {
     const r: Big = newtonRaphson(f, 0, { maxIterations: 100 });
 
     if (r) {
+      // TODO: need a way to sell ALL shares of an outcome
       return r.toFixed(4);
     }
     throw new Error(
       `could not calculate collateral resulting from sale of ${tokensToSell} of outcome '${outcomeId}`
     );
+  }
+
+  calcSellCollateralOut(collateralOut: number, outcomeTarget: number): number {
+    // TODO: what is this actually doing?
+    this.assertValidOutcome(outcomeTarget);
+
+    const outcomeTokens = this.outcomeTokens;
+    const collateralOutPlusFees = collateralOut / (1 - this.swapFee);
+    const tokenToSell = outcomeTokens.get(outcomeTarget);
+    if (!tokenToSell) {
+      throw new Error(`couldn't find outcome token '${outcomeTarget}'`);
+    }
+    const tokenToSellBalance = tokenToSell.getBalance(this.getOwnAccount());
+    let newSellTokenBalance = tokenToSellBalance;
+
+    outcomeTokens.forEach((token, outcome) => {
+      if (outcome != outcomeTarget) {
+        const balance = token.getBalance(this.getOwnAccount());
+        const dividend = newSellTokenBalance * balance;
+        const divisor = balance - collateralOutPlusFees;
+
+        newSellTokenBalance = dividend / divisor;
+      }
+    });
+    if (newSellTokenBalance <= 0) {
+      throw new Error("error - math approximation");
+    }
+
+    let outcomeSharesToSell =
+      collateralOutPlusFees + newSellTokenBalance - tokenToSellBalance;
+    console.log(
+      `to receive $${collateralOut} would need to sell ${outcomeSharesToSell} shares of outcome '${outcomeTarget}'`
+    );
+    return outcomeSharesToSell;
   }
 
   buy(sender: AccountId, amountIn: number, outcomeTarget: number): void {
@@ -538,7 +575,7 @@ export class Pool {
     logger.logPool(this);
   }
 
-  sellByExpectedCollateralBack(
+  sell(
     sender: AccountId,
     amountOut: number,
     outcomeTarget: number,
@@ -546,10 +583,7 @@ export class Pool {
   ): number {
     this.assertValidOutcome(outcomeTarget);
     // TODO: this isn't right
-    const sharesIn = this.calcCollateralReturnedForSellingOutcome(
-      amountOut,
-      outcomeTarget
-    );
+    const sharesIn = this.calcSellCollateralOut(amountOut, outcomeTarget);
 
     if (sharesIn > maxSharesIn) {
       throw new Error(
@@ -631,9 +665,50 @@ export class Pool {
     return toEscrow;
   }
 
-  // sellByOutcomeTokens(sender: AccountId, sharesIn: number, outcomeTarget: number): number {
+  sellByOutcomeTokens(
+    sender: AccountId,
+    sharesIn: number,
+    outcomeTarget: number
+  ): number {
+    const expectedCollateral = this.calcCollateralReturnedForSellingOutcome(
+      sharesIn,
+      outcomeTarget
+    );
+    return this.sell(sender, expectedCollateral, outcomeTarget, sharesIn);
+  }
 
-  // }
+  payout(accountId: AccountId, payoutNumerators?: number[]) {
+    const poolTokenBalance = this.getPoolTokenBalance(accountId);
+    const feesEarned =
+      poolTokenBalance > 0 ? this.exitPool(accountId, poolTokenBalance) : 0;
+
+    const balances = this.getAndClearBalances(accountId);
+    const escrowAccount = this.resolutionEscrow.get(accountId);
+    if (!escrowAccount) {
+      return 0;
+    }
+
+    let payout: number;
+    // TODO: understand & validate this logic
+    if (payoutNumerators) {
+      payout =
+        payoutNumerators.reduce((ac, num, outcomeIdx) => {
+          const bal = balances[outcomeIdx];
+          const payout = bal * num;
+          return ac + payout;
+        }, 0) + escrowAccount.valid;
+    } else {
+      payout =
+        balances.reduce((sum, _bal, outcomeIdx) => {
+          const spent = escrowAccount.getSpent(outcomeIdx);
+          return sum + spent;
+        }) + escrowAccount.invalid;
+    }
+
+    this.resolutionEscrow.remove(accountId);
+
+    return payout + feesEarned;
+  }
 
   addToPools(amount: number): void {
     if (this.outcomeTokens.size !== this.outcomes) {
@@ -661,10 +736,62 @@ export class Pool {
     return 0.01;
   }
 
-  private assertValidOutcome(outcomeId: number) {
+  getSpotPrice(targetOutcome: number): number {
+    let oddsWeightForTarget = 0;
+    let oddsWeightSum = 0;
+
+    this.outcomeTokens.forEach((_, outcomeId) => {
+      const weightForOutcome = this.getOddsWeightForOutcome(outcomeId);
+      oddsWeightSum += weightForOutcome;
+
+      if (outcomeId === targetOutcome) {
+        oddsWeightForTarget = weightForOutcome;
+      }
+    });
+
+    const ratio = oddsWeightForTarget / oddsWeightSum;
+    const scale = 1 / (1 - this.swapFee);
+
+    return ratio * scale;
+  }
+
+  getSpotPriceSansFee(targetOutcome: number): number {
+    let oddsWeightForTarget = 0;
+    let oddsWeightSum = 0;
+
+    this.outcomeTokens.forEach((_, outcomeId) => {
+      const weightForOutcome = this.getOddsWeightForOutcome(outcomeId);
+
+      oddsWeightSum += weightForOutcome;
+
+      if (outcomeId === targetOutcome) {
+        oddsWeightForTarget = weightForOutcome;
+      }
+    });
+
+    if (oddsWeightSum === 0) {
+      return 0;
+    }
+    return oddsWeightForTarget / oddsWeightSum;
+  }
+
+  getOddsWeightForOutcome(targetOutcome: number): number {
+    let oddsWeightForTarget = 0;
+    this.outcomeTokens.forEach((token, outcomeId) => {
+      if (outcomeId !== targetOutcome) {
+        const balance = token.getBalance(this.getOwnAccount());
+        oddsWeightForTarget =
+          oddsWeightForTarget === 0 ? balance : oddsWeightForTarget * balance;
+      }
+    });
+
+    return oddsWeightForTarget;
+  }
+
+  assertValidOutcome(outcomeId: number) {
     if (outcomeId < 0 || outcomeId >= this.outcomes) {
       throw new Error(
-        `outcome index '${outcomeId}' must be between 0 and ${
+        `invalid outcome - index '${outcomeId}' must be between 0 and ${
           this.outcomes - 1
         }`
       );

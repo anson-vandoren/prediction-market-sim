@@ -244,7 +244,7 @@ const canBuyFor10Outcome0 = pool.calcBuyAmount(10, 0);
 
 console.log("** Alice buying 10 of outcome 0 **");
 pool.buy("alice", 10, 0);
-pool.sell("alice", 10, 0);
+pool.sellByOutcomeTokens("alice", 10, 0);
 
 const feesForAlice = pool.getFeesWithdrawable("alice");
 console.log("** Alice exiting the pool **");
