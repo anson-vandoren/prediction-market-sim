@@ -5,8 +5,8 @@ import { newtonRaphson } from "@fvictorio/newton-raphson-method";
 import { Big } from "big.js";
 import { logger } from "./logger";
 
-const MIN_OUTCOMES = 2;
-const MAX_OUTCOMES = 3; // may increase this later
+export const MIN_OUTCOMES = 2;
+export const MAX_OUTCOMES = 3; // may increase this later
 
 export class Pool {
   outcomes: number; // number of outcomes for this pool
@@ -21,13 +21,13 @@ export class Pool {
   constructor(outcomes: number, swapFee: number) {
     // bounds-check outcomes
     if (outcomes < MIN_OUTCOMES || outcomes > MAX_OUTCOMES) {
-      throw new Error(
+      throw new RangeError(
         `must have between ${MIN_OUTCOMES} and ${MAX_OUTCOMES} outcomes for a pool`
       );
     }
     // bounds-check swapFee
     if (swapFee < 0 || swapFee >= 1) {
-      throw new Error(`invalid swap fee ${swapFee}. Must be in [0, 1)`);
+      throw new RangeError(`invalid swap fee ${swapFee}. Must be in [0, 1)`);
     }
 
     this.swapFee = swapFee;
@@ -94,7 +94,7 @@ export class Pool {
     weightIndication?: number[]
   ): void {
     if (collateralIn < this.minLiquidityAmount()) {
-      throw new Error(`Must add at least ${this.minLiquidityAmount()}`);
+      throw new RangeError(`Must add at least ${this.minLiquidityAmount()}`);
     }
     const outcomeTokensToReturn: number[] = [];
 
@@ -115,9 +115,9 @@ export class Pool {
       // return a portion of more likely outcome tokens to the liquidity provider
       const maxWeight = Math.max(...weightIndication);
       weightIndication.forEach((weight) => {
-        const toLeaveInPool = collateralIn * (weight / maxWeight);
-        const toReturnToSender = collateralIn - toLeaveInPool;
-        outcomeTokensToReturn.push(toReturnToSender);
+        const leaveInPool = collateralIn * (weight / maxWeight);
+        const returnToSender = collateralIn - leaveInPool;
+        outcomeTokensToReturn.push(returnToSender);
       });
       toMint = collateralIn;
     } else {
@@ -134,18 +134,19 @@ export class Pool {
       outcomeBalances.forEach((outcomeBalance) => {
         // when providing liquidity, don't want to change the odds of the pool, so need to
         // return some of the less-likely token(s) to maintain the same ratio
-        const leaveInPool = (collateralIn * outcomeBalance) / maxOutcomeBalance;
+        const leaveInPool = collateralIn * (outcomeBalance / maxOutcomeBalance);
         const returnToSender = collateralIn - leaveInPool;
         // for highest balance outcome token, remaining === totalIn, so outcomeTokensToReturn[highestBalanceOutcome] === 0
         // for the other outcome token, return totalIn(1 - thisOutcomeTokens/otherOutcomeTokens), for 2-outcome pool
         // no outcome tokens will be returned if the outcomes are evenly matched, otherwise some of the more
         // likely outcome token(s) will be returned
-        // TODO: still not sure this logic is correct - only returns the most likely outcome token instead of some of each
-        //       maybe instead it's supposed to be divided by total instead of highest?
         outcomeTokensToReturn.push(returnToSender);
       });
 
-      // TODO: I think this is essentially tracking how far the pool has drifted from initial weights, but need to investigate further
+      // TODO: I think this is essentially tracking how far the pool has drifted
+      //       from initial weights, but need to investigate further.
+      //       From initial run-through, it's worse to provide liquidity later
+      //       in pool life if the pool resolves at the higher probability outcome
       toMint = (collateralIn * poolSupply) / maxOutcomeBalance;
     }
 
@@ -581,6 +582,100 @@ export class Pool {
     logger.logPool(this);
   }
 
+  sell2(
+    sender: AccountId,
+    sharesIn: number,
+    outcomeTarget: number,
+    maxSharesIn: number
+  ): number {
+    this.assertValidOutcome(outcomeTarget);
+    // TODO: this isn't right?
+    // const sharesIn = this.calcSellCollateralOut(amountOut, outcomeTarget);
+    const amountOut = this.calcCollateralReturnedForSellingOutcome(
+      sharesIn,
+      outcomeTarget
+    );
+
+    if (sharesIn > maxSharesIn) {
+      throw new Error(
+        `cannot sell ${sharesIn} as it's above maxSharesIn=${maxSharesIn}`
+      );
+    }
+    const tokenIn = this.outcomeTokens.get(outcomeTarget);
+    if (!tokenIn) {
+      throw new Error(`no token for outcome '${outcomeTarget}'`);
+    }
+
+    const escrowAccount = this.resolutionEscrow.getOrFail(sender);
+    const spent = escrowAccount.getSpent(outcomeTarget);
+    // TODO: why is this based on `spent`? how to tell how many shares of the outcome they actually have?
+    //       use tokenIn.getBalance(sender) instead?
+    if (spent <= 0) {
+      throw new Error(`${sender} has no balance of outcome '${outcomeTarget}'`);
+    }
+
+    // TODO: redo math and try to fit it into resolutionEscrow... (from upstream)
+    const fee = amountOut * this.swapFee;
+    const avgPrice = spent / tokenIn.getBalance(sender);
+    const sellPrice = (amountOut + fee) / sharesIn;
+
+    // remove the tokens from sender and return to the pool
+    tokenIn.safeTransferInternal(sender, this.getOwnAccount(), sharesIn);
+
+    this.feePoolWeight += fee;
+
+    let toEscrow: number;
+    if (sellPrice < avgPrice) {
+      const priceDelta = avgPrice - sellPrice;
+      const escrowAmt = priceDelta * sharesIn;
+      const invalidEscrow = escrowAccount.addToEscrowInvalid(escrowAmt);
+      logger.logToInvalidEscrow(sender, invalidEscrow);
+
+      // TODO: sub from spent and logging is done in both cases, remove dup code
+      const newSpent = escrowAccount.subFromSpent(
+        outcomeTarget,
+        amountOut + escrowAmt + fee
+      );
+      logger.logAccountOutcomeSpent(sender, outcomeTarget, newSpent);
+      toEscrow = 0;
+    } else if (sellPrice > avgPrice) {
+      const priceDelta = sellPrice - avgPrice;
+      const escrowAmt = priceDelta * sharesIn;
+      const validEscrow = escrowAccount.addToEscrowValid(escrowAmt);
+      logger.logToValidEscrow(sender, validEscrow);
+      const entriesToSub = amountOut - escrowAmt + fee;
+
+      // TODO: entriesToSub should never be larger than spent
+      if (entriesToSub > spent) {
+        const newSpent = escrowAccount.subFromSpent(outcomeTarget, spent);
+        logger.logAccountOutcomeSpent(sender, outcomeTarget, newSpent);
+      } else {
+        const newSpent = escrowAccount.subFromSpent(
+          outcomeTarget,
+          entriesToSub
+        );
+        logger.logAccountOutcomeSpent(sender, outcomeTarget, newSpent);
+      }
+
+      toEscrow = escrowAmt;
+    } else {
+      const newSpent = escrowAccount.subFromSpent(
+        outcomeTarget,
+        amountOut - fee
+      );
+      logger.logAccountOutcomeSpent(sender, outcomeTarget, newSpent);
+      toEscrow = 0;
+    }
+
+    const tokensToBurn = amountOut + fee;
+    this.removeFromPools(tokensToBurn);
+
+    logger.logSell(sender, outcomeTarget, sharesIn, amountOut, fee, toEscrow);
+    logger.logPool(this);
+
+    return toEscrow;
+  }
+
   sell(
     sender: AccountId,
     amountOut: number,
@@ -588,7 +683,7 @@ export class Pool {
     maxSharesIn: number
   ): number {
     this.assertValidOutcome(outcomeTarget);
-    // TODO: this isn't right
+    // TODO: this isn't right?
     const sharesIn = this.calcSellCollateralOut(amountOut, outcomeTarget);
 
     if (sharesIn > maxSharesIn) {

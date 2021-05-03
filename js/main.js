@@ -1,136 +1,21 @@
 import { Pool } from "./pool";
-
-class Market {
-  constructor(fundingAmt = 10) {
-    fundingAmt = parseFloat(fundingAmt);
-    this.tokens = { Y: fundingAmt, N: fundingAmt };
-    this.amtBet = 0;
-    this.initialFunding = fundingAmt;
-    this.currentFunding = fundingAmt;
-    this.invariant = this.calculateInvariant();
-  }
-
-  calculateInvariant = () => {
-    let invariant = 1;
-    for (const [_, amt] of Object.entries(this.tokens)) {
-      invariant *= amt;
-    }
-    return invariant;
-  };
-
-  bet = (side, amt) => {
-    side = side.toUpperCase();
-    if (!this.tokens.hasOwnProperty(side)) {
-      console.log("unknown side: ", side);
-      return;
-    }
-    amt = parseFloat(amt);
-    if (amt <= 0.0) {
-      console.log(`Bet amount must be > 0, not ${amt}`);
-      return;
-    }
-
-    // keep track of how much has been bet so far on this market
-    this.amtBet += amt;
-
-    // add tokens to each side equivalent to the bet
-    for (const side in this.tokens) {
-      if (this.tokens.hasOwnProperty(side)) {
-        this.tokens[side] += amt;
-      }
-    }
-
-    // calculate how many tokens must be returned to maintain invariant
-    const otherSide = side === "Y" ? "N" : "Y";
-    const tokensReceived =
-      this.tokens[side] - this.invariant / this.tokens[otherSide];
-
-    // remove tokens from market pool and return
-    this.tokens[side] -= tokensReceived;
-    return tokensReceived;
-  };
-
-  odds = () => {
-    // oddsWeightForOutcome = product(numOutcomeTokensInInventoryForOtherOutcome for every otherOutcome)
-    const weights = Object.entries(this.tokens).reduce(
-      (acc, kv) => {
-        const [thisSide, _] = kv;
-        let weight = 1;
-        for (const [side, amt] of Object.entries(this.tokens)) {
-          if (side !== thisSide) {
-            weight *= amt;
-          }
-        }
-        acc[thisSide] = weight;
-        acc.sum += weight;
-        return acc;
-      },
-      { sum: 0 }
-    );
-
-    // oddsForOutcome = oddsWeightForOutcome / sum(oddsWeightForOutcome for every outcome)
-    return Object.entries(this.tokens).reduce((acc, kv) => {
-      const [side, _] = kv;
-      acc[side] = weights[side] / weights.sum;
-      return acc;
-    }, {});
-  };
-}
-
-class Participant {
-  constructor(name) {
-    this.name = name;
-    this.tokens = [0, 0]; // yes, no
-    this.betAmts = [0, 0]; // yes, no
-    this.liquidityProvided = 0;
-  }
-}
-
-class Participants {
-  constructor(initialParticipant = null) {
-    this.participants = [];
-    if (initialParticipant != null) {
-      this.participants.push(new Participant(initialParticipant));
-    }
-  }
-
-  new = (name) => {
-    const participant = new Participant(name);
-    this.participants.push(participant);
-  };
-
-  addTokensFor(name, side, tokens, price) {
-    const pid = this.participants.findIndex((p) => p.name === name);
-    const idx = side === "Y" ? 0 : 1;
-    this.participants[pid].tokens[idx] += parseFloat(tokens);
-    this.participants[pid].betAmts[idx] += parseFloat(price);
-  }
-
-  addLiquidityFrom(name, amt) {
-    const pid = this.participants.findIndex((p) => p.name === name);
-    this.participants[pid].liquidityProvided += parseFloat(amt);
-  }
-}
+import { Outcome } from "./tokens";
 
 function updateMarketView() {
-  document.getElementById("mktYesTokens").innerHTML = market.tokens.Y.toFixed(
-    2
-  );
-  document.getElementById("mktNoTokens").innerHTML = market.tokens.N.toFixed(2);
-  document.getElementById("mktAmtBet").innerHTML = market.amtBet.toString();
-  document.getElementById(
-    "mktCurrentFunding"
-  ).innerHTML = market.currentFunding.toString();
-  document.getElementById(
-    "mktInitialFunding"
-  ).innerHTML = market.initialFunding.toString();
-  document.getElementById(
-    "mktInvariant"
-  ).innerHTML = market.invariant.toString();
+  const balances = pool.getOutcomeBalances();
+  const yesTokensInPool = balances[Outcome.YES].toFixed(2);
+  const noTokensInPool = balances[Outcome.NO].toFixed(2);
+  const poolTotalAmountBet = "FIXME";
+  const mktBetCollateral = "FIXME";
+  document.getElementById("mktYesTokens").innerHTML = yesTokensInPool;
+  document.getElementById("mktNoTokens").innerHTML = noTokensInPool;
+  document.getElementById("mktLpTokens").innerHTML = poolTotalAmountBet;
+  document.getElementById("mktLiquidityCollateral").innerHTML = "FIXME";
+  document.getElementById("mktBetCollateral").innerHTML = mktBetCollateral;
 
-  const odds = market.odds();
-  const probYes = (odds.Y * 100).toFixed(2) + " %";
-  const probNo = (odds.N * 100).toFixed(2) + " %";
+  const probYes =
+    (pool.getSpotPriceSansFee(Outcome.YES) * 100).toFixed(2) + "%";
+  const probNo = (pool.getSpotPriceSansFee(Outcome.NO) * 100).toFixed(2) + "%";
   document.getElementById("mktProbYes").innerHTML = probYes;
   document.getElementById("mktProbNo").innerHTML = probNo;
 }
@@ -146,30 +31,41 @@ function createRowFrom(strArray) {
   return row;
 }
 
+function clearOptions(selectElem) {
+  for (let i = selectElem.options.length - 1; i >= 0; i--) {
+    selectElem.remove(i);
+  }
+}
+
 function updateParticipantsView() {
   let newBody = document.createElement("tbody");
-  const newBetSelector = document.getElementById("newBetParticipant");
-  const liquidityParticipant = document.getElementById("liquidityParticipant");
+  const betAccounts = document.getElementById("newBetParticipant");
+  const liquidityAccounts = document.getElementById("liquidityParticipant");
+  clearOptions(betAccounts);
+  clearOptions(liquidityAccounts);
 
-  for (const participant of participants.participants) {
+  for (const participant of pool.resolutionEscrow.escrowAccounts.entries()) {
+    const [accountId, escrowAccount] = participant;
     // update the table
     const newRow = createRowFrom([
-      participant.name,
-      participant.tokens[0],
-      participant.betAmts[0],
-      participant.tokens[1],
-      participant.betAmts[1],
-      participant.liquidityProvided,
+      accountId,
+      pool.getOutcomeBalance(accountId, Outcome.YES),
+      escrowAccount.getSpent(Outcome.YES),
+      pool.getOutcomeBalance(accountId, Outcome.NO),
+      escrowAccount.getSpent(Outcome.NO),
+      pool.getPoolTokenBalance(accountId),
+      escrowAccount.getLpSpent(Outcome.YES) +
+        escrowAccount.getLpSpent(Outcome.NO),
     ]);
     newBody.appendChild(newRow);
 
     // update the bet selector
     const newOption = document.createElement("option");
-    newOption.appendChild(document.createTextNode(participant.name));
-    newBetSelector.appendChild(newOption);
+    newOption.appendChild(document.createTextNode(accountId));
+    betAccounts.appendChild(newOption);
 
     // update the liquidity selector
-    liquidityParticipant.appendChild(newOption.cloneNode(true));
+    liquidityAccounts.appendChild(newOption.cloneNode(true));
   }
 
   // swap the old table for the new one
@@ -179,20 +75,22 @@ function updateParticipantsView() {
 }
 
 function resetSimulation() {
-  const newFundingAmt = document.getElementById("newFundingAmt").value;
-  market = new Market(newFundingAmt);
-  participants = new Participants("Alice");
+  const outcomes = 2;
+  const swapFee = 0.0;
+  pool = new Pool(outcomes, swapFee);
   updateMarketView();
   updateParticipantsView();
 }
 
 function placeBet() {
-  const betAmt = document.getElementById("newBetAmt").value;
-  const betSide =
-    document.getElementById("newBetSide").value === "YES" ? "Y" : "N";
-  const tokensReceived = market.bet(betSide, betAmt);
-  const bettor = document.getElementById("newBetParticipant").value;
-  participants.addTokensFor(bettor, betSide, tokensReceived, betAmt);
+  const outcomeShares = parseFloat(document.getElementById("newBetAmt").value);
+  const outcomeId =
+    document.getElementById("newBetSide").value === "YES"
+      ? Outcome.YES
+      : Outcome.NO;
+
+  const accountId = document.getElementById("newBetParticipant").value;
+  pool.buy(accountId, outcomeShares, outcomeId);
   updateMarketView();
   updateParticipantsView();
 }
@@ -203,11 +101,12 @@ function changeLiquidity() {
   const participant = document.getElementById("liquidityParticipant").value;
 
   // add liquidity to market
-
-  // update participant
-  participants.addLiquidityFrom(participant, amt);
+  // TODO: allow for unbalanced pools?
+  const weights = pool.poolToken.totalSupply === 0 ? [1, 1] : undefined;
+  pool.addLiquidity(participant, amt, weights);
 
   updateParticipantsView();
+  updateMarketView();
 }
 
 function updateLiquiditySideBtn(evt) {
@@ -215,6 +114,12 @@ function updateLiquiditySideBtn(evt) {
   let side = evt.target.value.toLowerCase();
   side = side.charAt(0).toUpperCase() + side.slice(1);
   ref.innerText = side + " Liquidity";
+}
+
+function newEscrowAccount() {
+  const accountId = document.getElementById("newParticipantName").value;
+  pool.resolutionEscrow.getOrNew(accountId);
+  updateParticipantsView();
 }
 
 function init() {
@@ -225,29 +130,14 @@ function init() {
   liquidityBtn.onchange = updateLiquiditySideBtn;
   liquidityBtn.dispatchEvent(new Event("change"));
 
+  document.getElementById("newParticipantSubmit").onclick = newEscrowAccount;
+
   updateMarketView();
   updateParticipantsView();
 }
 
-let market = new Market();
-let participants = new Participants("Alice");
-
-console.log("** creating pool **");
-const pool = new Pool(2, 0.02); // 2% swapFee === (swapFee / 10^collateralDecimals)
-
-console.log("** adding $10 liquidity for poolBot **");
-pool.addLiquidity("poolBot", 10, [1, 1]);
-console.log("** adding $5 liquidity for Alice **");
-pool.addLiquidity("alice", 5);
-
-const canBuyFor10Outcome0 = pool.calcBuyAmount(10, 0);
-
-console.log("** Alice buying 10 of outcome 0 **");
-pool.buy("alice", 10, 0);
-pool.sellByOutcomeTokens("alice", 10, 0);
-
-const feesForAlice = pool.getFeesWithdrawable("alice");
-console.log("** Alice exiting the pool **");
-const returned = pool.exitPool("alice", pool.getPoolTokenBalance("alice"));
+let pool = new Pool(2, 0);
+// make a starter account
+pool.resolutionEscrow.getOrNew("alice");
 
 window.onload = init;

@@ -1,4 +1,4 @@
-import { Pool } from "../js/pool";
+import { MIN_OUTCOMES, MAX_OUTCOMES, Pool } from "../js/pool";
 import { expect } from "chai";
 import "mocha";
 import { Outcome } from "../js/tokens";
@@ -215,6 +215,272 @@ describe("a new pool", () => {
     expect(pool.outcomeTokens.size).to.equal(numTokens);
     pool.outcomeTokens.forEach((token) => {
       expect(token.totalSupply).to.equal(0);
+    });
+  });
+  it("has a valid number of outcomes", () => {
+    expect(() => {
+      new Pool(1, 0);
+    }, "should have thrown RangeError for 1 outcome").to.throw(RangeError);
+
+    expect(() => {
+      new Pool(0, 0);
+    }, "should have thrown RangeError for 0 outcomes").to.throw(RangeError);
+    expect(() => {
+      new Pool(MIN_OUTCOMES, 0);
+    }).to.not.throw();
+  });
+  it("has a valid fee", () => {
+    expect(() => {
+      new Pool(MIN_OUTCOMES, 0);
+    }, "should allow 0 fee").to.not.throw();
+    expect(() => {
+      new Pool(MIN_OUTCOMES, 0.05);
+    }, "should allow a fee").to.not.throw();
+    expect(() => {
+      new Pool(MIN_OUTCOMES, 1);
+    }, "should not allow fee of 100%").to.throw(RangeError);
+    expect(() => {
+      new Pool(MIN_OUTCOMES, -0.01);
+    }, "should not allow negative fee").to.throw(RangeError);
+    expect(() => {
+      new Pool(MIN_OUTCOMES, 1.01);
+    }, "should not allow fee > 1").to.throw(RangeError);
+  });
+});
+
+describe("addLiquidity", () => {
+  it("fails if insufficient liquidity provided", () => {
+    const pool = new Pool(2, 0);
+    expect(() =>
+      pool.addLiquidity("alice", pool.minLiquidityAmount() - 0.0001)
+    ).to.throw(RangeError);
+  });
+  it("fails if no weights given for new pool", () => {
+    const pool = new Pool(3, 0);
+    expect(() =>
+      pool.addLiquidity("alice", pool.minLiquidityAmount())
+    ).to.throw("must provide weights");
+  });
+  it("fails if weights do not match outcome number", () => {
+    const numOutcomes = 3;
+    const weightsToGive = Array(numOutcomes - 1);
+    expect(weightsToGive.length).to.be.greaterThanOrEqual(MIN_OUTCOMES);
+    expect(weightsToGive.length).to.be.lessThanOrEqual(MAX_OUTCOMES);
+    const pool = new Pool(numOutcomes, 0);
+    expect(() =>
+      pool.addLiquidity("alice", pool.minLiquidityAmount(), weightsToGive)
+    ).to.throw("invalid weights");
+  });
+  it("fails if weights are given to established pool", () => {
+    const pool = new Pool(2, 0);
+    pool.addLiquidity("alice", 10, [1, 1]);
+    expect(() => pool.addLiquidity("bob", 5, [1, 1])).to.throw(
+      "cannot set weight"
+    );
+  });
+  it("gives LP pool tokens equal to collateralIn when creating pool", () => {
+    const params: [number, number[]][] = [
+      [2, [1, 1]],
+      [2, [1, 3]],
+      [3, [1, 1, 1]],
+      [3, [1, 4, 1]],
+    ];
+    params.forEach(([numOutcomes, weights]) => {
+      const pool = new Pool(numOutcomes, 0);
+
+      const provider = "alice";
+      const collateralIn = 10;
+      pool.addLiquidity(provider, collateralIn, weights);
+      const providerPoolTokens = pool.getPoolTokenBalance(provider);
+      const poolPoolTokens = pool.getPoolTokenBalance(pool.getOwnAccount());
+      const totalPoolTokens = providerPoolTokens + poolPoolTokens;
+
+      expect(totalPoolTokens).to.equal(
+        collateralIn,
+        "total pool tokens should equal collateral in"
+      );
+      expect(providerPoolTokens).to.equal(
+        collateralIn,
+        "provider should have received all new pool tokens created"
+      );
+      expect(poolPoolTokens).to.equal(0, "pool should not own any pool tokens");
+    });
+  });
+  it("gives LP tokens equal to collateralIn when even odds", () => {
+    // initial pool with even odds
+    const pool = new Pool(3, 0.05);
+    pool.addLiquidity("alice", 10, [1, 1, 1]);
+
+    // some other person adds liquidity - odds stay the same
+    pool.addLiquidity("bob", 50);
+
+    // when last person adds liquidity with odds still the same, pool tokens === collateralIn
+    const odds = [0, 1, 2].map((_, outcomeId) => pool.getSpotPrice(outcomeId));
+    odds.forEach((theseOdds) => {
+      expect(theseOdds).to.equal(odds[0]);
+    });
+    const collateralIn = 25;
+    const provider = "charlie";
+    pool.addLiquidity(provider, collateralIn);
+    expect(pool.getPoolTokenBalance(provider)).to.equal(collateralIn);
+  });
+  it("gives fewer LP tokens than collateralIn if odds are different from original", () => {
+    const pool = new Pool(3, 0.1);
+    const initialProvider = "alice";
+    const initialCollateral = 100;
+    pool.addLiquidity(initialProvider, initialCollateral, [1, 2, 1]);
+    expect(pool.getPoolTokenBalance(initialProvider)).to.equal(
+      initialCollateral
+    );
+
+    // even though outcomes are uneven, a new provider gets full LP tokens since
+    // the odds match the original
+    const secondProvider = "bob";
+    const secondCollateral = 10;
+    pool.addLiquidity(secondProvider, secondCollateral);
+    expect(pool.getPoolTokenBalance(secondProvider)).to.equal(secondCollateral);
+
+    // someone else buys an outcome
+    const outcomeBuyer = "zebedee";
+    pool.buy(outcomeBuyer, 10, 0);
+
+    // now a third provider shouldn't get their full collateral
+    const thirdProvider = "charlie";
+    const thirdCollateral = 15;
+    pool.addLiquidity(thirdProvider, thirdCollateral);
+    expect(pool.getPoolTokenBalance(thirdProvider)).to.be.lessThan(
+      thirdCollateral
+    );
+  });
+  it("gives no outcome tokens for new pool with even weights", () => {
+    const params: [number, number[]][] = [
+      [2, [1, 1]],
+      [3, [1, 1, 1]],
+    ];
+    params.forEach(([numOutcomes, weights]) => {
+      const pool = new Pool(numOutcomes, 0);
+      const provider = "charlie";
+      pool.addLiquidity(provider, 10, weights);
+      weights.forEach((_, outcomeId) => {
+        expect(pool.getOutcomeBalance(provider, outcomeId)).to.equal(0);
+      });
+    });
+  });
+  it("results in pool outcome tokens equal to amount of liquidity provided for even odds", () => {
+    const params: [number, number[]][] = [
+      [2, [1, 1]],
+      [3, [1, 1, 1]],
+    ];
+    params.forEach(([numOutcomes, weights]) => {
+      const pool = new Pool(numOutcomes, 0);
+      const provider = "charlie";
+      const collateralProvided = 10;
+
+      // before providing liquidity
+      pool.getOutcomeBalances().forEach((balance) => {
+        expect(balance).to.equal(0);
+      });
+      pool.addLiquidity(provider, collateralProvided, weights);
+
+      // after providing liquidity
+      pool.getOutcomeBalances().forEach((balance) => {
+        expect(balance).to.equal(collateralProvided);
+      });
+    });
+  });
+  it("splits outcome tokens between pool and provider on unequal odds", () => {
+    const params: [number, number[]][] = [
+      [2, [1, 2]],
+      [3, [1, 4, 1]],
+    ];
+    params.forEach(([numOutcomes, weights]) => {
+      const pool = new Pool(numOutcomes, 0);
+      const provider = "charlie";
+      const collateralProvided = 10;
+
+      // before providing liquidity
+      const startingPoolBalances = pool.getOutcomeBalances();
+      const startingProviderBalances = weights.map((_, outcomeId) =>
+        pool.getOutcomeBalance(provider, outcomeId)
+      );
+      const startingCombinedBalances = startingPoolBalances.map(
+        (bal, idx) => bal + startingProviderBalances[idx]
+      );
+      pool.addLiquidity(provider, collateralProvided, weights);
+
+      // after providing liquidity
+      const endingPoolBalances = pool.getOutcomeBalances();
+      const endingProviderBalances = weights.map((_, outcomeId) =>
+        pool.getOutcomeBalance(provider, outcomeId)
+      );
+      const endingCombinedBalances = endingPoolBalances.map(
+        (bal, idx) => bal + endingProviderBalances[idx]
+      );
+      endingCombinedBalances.forEach((outcomeBalance, idx) => {
+        expect(outcomeBalance).to.equal(
+          startingCombinedBalances[idx] + collateralProvided
+        );
+      });
+    });
+  });
+  it("returns outcome tokens for more likely outcome", () => {
+    // create a new pool and add initial liquidity at uneven odds/weights
+    const pool = new Pool(2, 0);
+    pool.addLiquidity("bob", 10, [1, 2]);
+
+    // verify probabilities - higher weighted outcome should have higher price
+    const mostLikelyOutcomeId = 0; // lower weight => higher probability
+    const leastLikelyOutcomeId = 1; // higher weight => lower probability
+    expect(pool.getSpotPrice(leastLikelyOutcomeId)).to.be.lessThan(
+      pool.getSpotPrice(mostLikelyOutcomeId),
+      "unexpected probabilities"
+    );
+
+    // add liquidity for a new provider (pool is already unequal)
+    const provider = "alice";
+    [0, 1].forEach((outcomeId) => {
+      expect(pool.getOutcomeBalance(provider, outcomeId)).to.equal(
+        0,
+        "starting outcome balance should be zero"
+      );
+    });
+    pool.addLiquidity(provider, 10);
+
+    // make sure no unlikely token outcomes were given
+    expect(pool.getOutcomeBalance(provider, leastLikelyOutcomeId)).to.equal(0);
+    // make sure higher probability tokens were given
+    expect(
+      pool.getOutcomeBalance(provider, mostLikelyOutcomeId)
+    ).to.be.greaterThan(0);
+  });
+  it("does not change probabilities when adding liquidity", () => {
+    // test both with and without fees, for different number of outcomes
+    const params: [number, number, number[]][] = [
+      [2, 0, [1, 2]],
+      [2, 0.1, [1, 2]],
+      [3, 0, [1, 3, 5]],
+    ];
+    params.forEach(([numOutcomes, fee, weights]) => {
+      const pool = new Pool(numOutcomes, fee);
+
+      // add initial liquidity to create unequal weighted pool
+      const initialProvider = "alice";
+      pool.addLiquidity(initialProvider, 10, weights);
+      const initialOdds = weights.map((_, outcomeId) =>
+        pool.getSpotPrice(outcomeId)
+      );
+
+      // add liquidity from new provider
+      const newProvider = "bob";
+      pool.addLiquidity(newProvider, 100);
+      const finalOdds = weights.map((_, outcomeId) =>
+        pool.getSpotPrice(outcomeId)
+      );
+
+      // make sure odds are the same before and after
+      initialOdds.forEach((odds, outcomeId) => {
+        expect(odds).to.be.approximately(finalOdds[outcomeId], 0.00001);
+      });
     });
   });
 });
