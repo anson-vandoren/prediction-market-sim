@@ -506,11 +506,11 @@ export class Pool {
       return otherDeltasProduct.mul(thisOutcomeDelta).minus(originalInvariant);
     };
 
-    const r: Big = newtonRaphson(f, 0, { maxIterations: 100 });
+    const r = newtonRaphson(f, 0, { maxIterations: 100 });
 
     if (r) {
       // TODO: need a way to sell ALL shares of an outcome
-      return r.toFixed(4);
+      return r.round(4).toNumber();
     }
     throw new Error(
       `could not calculate collateral resulting from sale of ${tokensToSell} of outcome '${outcomeId}`

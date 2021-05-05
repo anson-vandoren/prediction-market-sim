@@ -1,13 +1,15 @@
 import { Pool } from "./pool";
 import { Outcome } from "./tokens";
+import App from "../components/app";
+import { createApp } from "vue";
 
 function updateMarketView() {
   const balances = pool.getOutcomeBalances();
-  const yesTokensInPool = balances[Outcome.YES].toFixed(2);
+  // const yesTokensInPool = balances[Outcome.YES].toFixed(2);
   const noTokensInPool = balances[Outcome.NO].toFixed(2);
   const poolTotalAmountBet = "FIXME";
   const mktBetCollateral = "FIXME";
-  document.getElementById("mktYesTokens").innerHTML = yesTokensInPool;
+  // document.getElementById("mktYesTokens").innerHTML = yesTokensInPool;
   document.getElementById("mktNoTokens").innerHTML = noTokensInPool;
   document.getElementById("mktLpTokens").innerHTML = poolTotalAmountBet;
   document.getElementById("mktLiquidityCollateral").innerHTML = "FIXME";
@@ -141,3 +143,5 @@ let pool = new Pool(2, 0);
 pool.resolutionEscrow.getOrNew("alice");
 
 window.onload = init;
+
+createApp(App).mount("#app");

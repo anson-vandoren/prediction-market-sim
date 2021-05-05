@@ -2,7 +2,9 @@
   "compilerOptions": {
     "strictNullChecks": true,
     "strictPropertyInitialization": true,
-    "target": "ES6",
+    "target": "ESNext",
+    "strict": true,
+    "jsx": "preserve",
     "moduleResolution": "Node"
   },
   "include": ["js/**/*"]
