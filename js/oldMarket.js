@@ -79,25 +79,25 @@ class Participants {
   constructor(initialParticipant = null) {
     this.participants = [];
     if (initialParticipant != null) {
-      this.participants.push(new Participant(initialParticipant));
+      this.accounts.push(new Participant(initialParticipant));
     }
   }
 
   new = (name) => {
     const participant = new Participant(name);
-    this.participants.push(participant);
+    this.accounts.push(participant);
   };
 
   addTokensFor(name, side, tokens, price) {
-    const pid = this.participants.findIndex((p) => p.name === name);
+    const pid = this.accounts.findIndex((p) => p.name === name);
     const idx = side === "Y" ? 0 : 1;
-    this.participants[pid].tokens[idx] += parseFloat(tokens);
-    this.participants[pid].betAmts[idx] += parseFloat(price);
+    this.accounts[pid].tokens[idx] += parseFloat(tokens);
+    this.accounts[pid].betAmts[idx] += parseFloat(price);
   }
 
   addLiquidityFrom(name, amt) {
-    const pid = this.participants.findIndex((p) => p.name === name);
-    this.participants[pid].liquidityProvided += parseFloat(amt);
+    const pid = this.accounts.findIndex((p) => p.name === name);
+    this.accounts[pid].liquidityProvided += parseFloat(amt);
   }
 }
 

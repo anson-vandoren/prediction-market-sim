@@ -29,7 +29,17 @@
               <th class="th-regular">Spent</th>
             </tr>
           </thead>
-          <tbody id="tblParticipants"></tbody>
+          <tbody id="tblParticipants">
+            <tr v-for="participant in outcomeBalances" :key="participant.name">
+              <td>{{ participant.name }}</td>
+              <td>{{ participant.tokensYes }}</td>
+              <td>{{ participant.collateralYes }}</td>
+              <td>{{ participant.tokensNo }}</td>
+              <td>{{ participant.collateralNo }}</td>
+              <td>{{ participant.tokensPool }}</td>
+              <td>{{ participant.collateralPool }}</td>
+            </tr>
+          </tbody>
         </table>
       </div>
     </div>
@@ -38,11 +48,40 @@
 
 <script lang="ts">
 import { defineComponent } from "vue";
+import { Outcome } from "../js/tokens";
+import { Pool } from "../js/pool";
 
 export default defineComponent({
+  props: { pool: Pool, escrowAccounts: Array },
   data() {
     return {};
   },
-  props: [],
+  computed: {
+    outcomeBalances() {
+      return this.escrowAccounts.map((escrowAccount) => {
+        const accountId = escrowAccount.accountId;
+        return {
+          name: accountId,
+          tokensYes: (
+            this.pool.getOutcomeBalance(accountId, Outcome.YES) || 0.0
+          ).toFixed(2),
+          collateralYes: (escrowAccount.getSpent(Outcome.YES) || 0.0).toFixed(
+            2
+          ),
+          tokensNo: this.pool
+            .getOutcomeBalance(accountId, Outcome.NO)
+            .toFixed(2),
+          collateralNo: (escrowAccount.getSpent(Outcome.NO) || 0.0).toFixed(2),
+          tokensPool: (this.pool.getPoolTokenBalance(accountId) || 0.0).toFixed(
+            2
+          ),
+          collateralPool: (
+            escrowAccount.getLpSpent(Outcome.YES) +
+              escrowAccount.getLpSpent(Outcome.NO) || 0.0
+          ).toFixed(2),
+        };
+      });
+    },
+  },
 });
 </script>

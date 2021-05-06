@@ -9,11 +9,16 @@
         </div>
 
         <div id="rightCol">
-          <ParticipantTable></ParticipantTable>
+          <ParticipantTable
+            :pool="pool"
+            :escrow-accounts="escrowAccounts"
+          ></ParticipantTable>
           <ParticipantControls
-            @add-liquidity="onAddLiquidity"
-            @change-liquidity-amt="onLAmtChanged"
-            :liquidity="liquidity"
+            :escrow-accounts="escrowAccounts"
+            @create-account="createAccount"
+            @on-liquidity-buy="onLiquidityBuy"
+            @on-liquidity-sell="onLiquiditySell"
+            @on-buy-outcome="onBuyOutcome"
           ></ParticipantControls>
         </div>
       </div>
@@ -37,28 +42,38 @@ export default defineComponent({
     MarketTable,
   },
   data() {
-    console.log(this.liquidity);
     return {
       pool: this.pool,
-      liquidity: this.liquidity,
+      escrowAccounts: [...this.pool.resolutionEscrow.escrowAccounts.values()],
     };
   },
   beforeCreate() {
     this.pool = new Pool(2, 0);
-    this.liquidity = {
-      side: "BUY",
-      amt: 0,
-      participant: "",
-    };
+    this.pool.resolutionEscrow.getOrNew("alice");
   },
   methods: {
-    onAddLiquidity(sender, amount, weights) {
-      console.log(`adding liquidity for ${this.liquidity.amt}`);
-      this.pool.addLiquidity(sender, amount, weights);
+    createAccount(participantName) {
+      this.pool.resolutionEscrow.getOrNew(participantName);
+      this.updateAccounts();
     },
-    onLAmtChanged(newAmt) {
-      console.log("onLAmtChanged");
-      this.liquidity.amt = newAmt;
+    onLiquidityBuy({ amt, accountId }) {
+      const weightIndications =
+        this.pool.poolToken.totalSupply === 0 ? [1, 1] : undefined;
+      this.pool.addLiquidity(accountId, amt, weightIndications);
+      this.updateAccounts();
+    },
+    onLiquiditySell({ amt, accountId }) {
+      this.pool.exitPool(accountId, amt);
+      this.updateAccounts();
+    },
+    onBuyOutcome({ amt, accountId, side }) {
+      this.pool.buy(accountId, amt, side);
+      this.updateAccounts();
+    },
+    updateAccounts() {
+      this.escrowAccounts = [
+        ...this.pool.resolutionEscrow.escrowAccounts.values(),
+      ];
     },
   },
 });

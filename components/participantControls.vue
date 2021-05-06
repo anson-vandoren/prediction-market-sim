@@ -32,6 +32,8 @@
                     type="text"
                     name="newParticipantName"
                     id="newParticipantName"
+                    v-model="newParticipantName"
+                    @keyup.enter.native="createAccount"
                     class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
                   />
                 </div>
@@ -39,6 +41,7 @@
                   <button
                     type="button"
                     id="newParticipantSubmit"
+                    @click="createAccount"
                     class="py-2 px-4 justify-self-auto mt-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                   >
                     Add
@@ -117,6 +120,7 @@
                   <button
                     type="button"
                     id="placeNewBet"
+                    @click="transactShares"
                     class="py-2 px-4 mt-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                   >
                     Place Bet
@@ -134,8 +138,16 @@
                     <select
                       id="newBetParticipant"
                       name="newBetParticipant"
+                      v-model="shares.accountId"
                       class="focus:ring-indigo-500 focus:border-indigo-500 block w-full border-transparent bg-transparent text-gray-900 sm:text-sm rounded-md"
-                    ></select>
+                    >
+                      <option
+                        v-for="account in escrowAccounts"
+                        :value="account.accountId"
+                      >
+                        {{ account.accountId }}
+                      </option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -179,6 +191,7 @@
                     <select
                       id="liquiditySide"
                       name="liquiditySide"
+                      v-model="liquidity.side"
                       class="focus:ring-indigo-500 focus:border-indigo-500 block w-full border-transparent bg-transparent text-gray-900 sm:text-sm rounded-md"
                     >
                       <option>ADD</option>
@@ -190,7 +203,7 @@
                   <button
                     type="button"
                     id="changeLiquidity"
-                    @click="$emit('addLiquidity')"
+                    @click="changeLiquidity"
                     class="py-2 px-2 justify-self-auto mt-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                   >
                     Add Liquidity
@@ -208,8 +221,16 @@
                     <select
                       id="liquidityParticipant"
                       name="liquidityParticipant"
+                      v-model="liquidity.accountId"
                       class="focus:ring-indigo-500 focus:border-indigo-500 block w-full border-transparent bg-transparent text-gray-900 sm:text-sm rounded-md"
-                    ></select>
+                    >
+                      <option
+                        v-for="account in escrowAccounts"
+                        :value="account.accountId"
+                      >
+                        {{ account.accountId }}
+                      </option>
+                    </select>
                   </div>
                 </div>
               </div>
@@ -223,12 +244,47 @@
 
 <script lang="ts">
 import { defineComponent } from "vue";
-import { Pool } from "../js/pool";
+import { ResolutionEscrow } from "../js/resolutionEscrow";
+import { Outcome } from "../js/tokens";
 
 export default defineComponent({
-  props: {
-    liquidity: Object,
+  props: { escrowAccounts: Array[ResolutionEscrow] },
+  emits: [
+    "on-liquidity-buy",
+    "on-liquidity-sell",
+    "on-buy-outcome",
+    "create-account",
+  ],
+  data() {
+    return {
+      newParticipantName: "",
+      shares: { amt: 10, side: "YES", accountId: "alice" },
+      liquidity: { amt: 10, side: "ADD", accountId: "alice" },
+    };
   },
-  emits: ["addLiquidity", "changeLiquidityAmt"],
+  methods: {
+    createAccount() {
+      this.$emit("create-account", this.newParticipantName);
+      this.shares.accountId = this.newParticipantName;
+      this.liquidity.accountId = this.newParticipantName;
+
+      this.newParticipantName = "";
+    },
+    changeLiquidity() {
+      if (this.liquidity.side === "ADD") {
+        this.$emit("on-liquidity-buy", this.liquidity);
+      } else {
+        this.$emit("on-liquidity-sell", this.liquidity);
+      }
+    },
+    transactShares() {
+      const side = this.shares.side === "YES" ? Outcome.YES : Outcome.NO;
+      this.$emit("on-buy-outcome", {
+        amt: this.shares.amt,
+        accountId: this.shares.accountId,
+        side: side,
+      });
+    },
+  },
 });
 </script>

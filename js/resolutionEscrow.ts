@@ -60,7 +60,7 @@ export class ResolutionEscrows {
   }
 }
 
-class ResolutionEscrow {
+export class ResolutionEscrow {
   valid: number;
   invalid: number;
   accountId: string;
