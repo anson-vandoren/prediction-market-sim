@@ -7,7 +7,7 @@
         <table class="min-w-full divide-y divide-gray-200">
           <thead class="bg-gray-50">
             <tr>
-              <th colspan="7" class="text-lg py-3 font-semibold text-gray-900">
+              <th colspan="8" class="text-lg py-3 font-semibold text-gray-900">
                 Participants
               </th>
             </tr>
@@ -18,6 +18,7 @@
               <th colspan="2" class="text-lg font-medium text-gray-700">
                 Liquidity
               </th>
+              <th class="text-lg font-medium text-gray-700"></th>
             </tr>
             <tr>
               <th class="th-regular">Name</th>
@@ -27,6 +28,7 @@
               <th class="th-regular">Spent</th>
               <th class="th-regular">Tokens</th>
               <th class="th-regular">Spent</th>
+              <th class="th-regular">Bank</th>
             </tr>
           </thead>
           <tbody id="tblParticipants">
@@ -38,6 +40,7 @@
               <td>{{ participant.collateralNo }}</td>
               <td>{{ participant.tokensPool }}</td>
               <td>{{ participant.collateralPool }}</td>
+              <td>{{ collateralBank[participant.name] }}</td>
             </tr>
           </tbody>
         </table>
@@ -52,7 +55,7 @@ import { Outcome } from "../js/tokens";
 import { Pool } from "../js/pool";
 
 export default defineComponent({
-  props: { pool: Pool, escrowAccounts: Array },
+  props: { pool: Pool, escrowAccounts: Array, collateralBank: Object },
   data() {
     return {};
   },

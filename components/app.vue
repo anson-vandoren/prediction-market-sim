@@ -4,12 +4,19 @@
       <h1 class="text-center">Prediction Market Simulator</h1>
       <div class="grid grid-cols-2 flex-grow gap-6">
         <div id="leftCol">
-          <MarketTable :pool="pool"></MarketTable>
+          <MarketTable
+            :outcome-balances="outcomeBalances"
+            :escrow-accounts="escrowAccounts"
+            :pool-tokens="poolTokens"
+            :spot-prices="spotPrices"
+            :pool="pool"
+          ></MarketTable>
           <MarketControls></MarketControls>
         </div>
 
         <div id="rightCol">
           <ParticipantTable
+            :collateral-bank="collateralBank"
             :pool="pool"
             :escrow-accounts="escrowAccounts"
           ></ParticipantTable>
@@ -45,6 +52,10 @@ export default defineComponent({
     return {
       pool: this.pool,
       escrowAccounts: [...this.pool.resolutionEscrow.escrowAccounts.values()],
+      outcomeBalances: this.pool.getOutcomeBalances(),
+      poolTokens: this.pool.poolToken.totalSupply,
+      spotPrices: this.pool.getSpotPrices(),
+      collateralBank: { alice: 0 },
     };
   },
   beforeCreate() {
@@ -54,26 +65,39 @@ export default defineComponent({
   methods: {
     createAccount(participantName) {
       this.pool.resolutionEscrow.getOrNew(participantName);
-      this.updateAccounts();
+      this.updateFromPool();
+      this.updateCollateralBank(participantName, 0);
     },
     onLiquidityBuy({ amt, accountId }) {
       const weightIndications =
         this.pool.poolToken.totalSupply === 0 ? [1, 1] : undefined;
       this.pool.addLiquidity(accountId, amt, weightIndications);
-      this.updateAccounts();
+      this.updateFromPool();
+      this.updateCollateralBank(accountId, -amt);
     },
     onLiquiditySell({ amt, accountId }) {
-      this.pool.exitPool(accountId, amt);
-      this.updateAccounts();
+      const received = this.pool.exitPool(accountId, amt);
+      this.updateFromPool();
+      this.updateCollateralBank(accountId, received);
     },
     onBuyOutcome({ amt, accountId, side }) {
       this.pool.buy(accountId, amt, side);
-      this.updateAccounts();
+      this.updateFromPool();
+      this.updateCollateralBank(accountId, -amt);
     },
-    updateAccounts() {
+    updateFromPool() {
       this.escrowAccounts = [
         ...this.pool.resolutionEscrow.escrowAccounts.values(),
       ];
+      this.outcomeBalances = this.pool.getOutcomeBalances();
+      this.poolTokens = this.pool.poolToken.totalSupply;
+      this.spotPrices = this.pool.getSpotPrices();
+    },
+    updateCollateralBank(accountId, amt) {
+      if (!this.collateralBank.hasOwnProperty(accountId)) {
+        this.collateralBank[accountId] = 0;
+      }
+      this.collateralBank[accountId] += amt;
     },
   },
 });

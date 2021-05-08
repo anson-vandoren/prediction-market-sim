@@ -7,7 +7,7 @@
         <table class="min-w-full divide-y divide-gray-200">
           <thead class="bg-gray-50">
             <tr>
-              <th colspan="6" class="text-lg py-3 font-semibold text-gray-900">
+              <th colspan="5" class="text-lg py-3 font-semibold text-gray-900">
                 Market Status
               </th>
             </tr>
@@ -22,12 +22,16 @@
           <tbody>
             <tr>
               <td id="mktYesTokens">
-                {{ mktYesTokens }}
+                {{ marketStatus.yesTokens }}
               </td>
-              <td id="mktNoTokens"></td>
-              <td id="mktLpTokens"></td>
-              <td id="mktLiquidityCollateral"></td>
-              <td id="mktBetCollateral"></td>
+              <td id="mktNoTokens">{{ marketStatus.noTokens }}</td>
+              <td id="mktLpTokens">{{ marketStatus.lpTokens }}</td>
+              <td id="mktLiquidityCollateral">
+                {{ marketStatus.lpCollateral }}
+              </td>
+              <td id="mktBetCollateral">
+                {{ marketStatus.outcomeCollateral }}
+              </td>
             </tr>
           </tbody>
           <thead class="bg-gray-50">
@@ -41,9 +45,9 @@
           </thead>
           <tbody>
             <tr>
-              <td id="mktProbYes" colspan="2"></td>
+              <td colspan="2">{{ predictionNo }}</td>
               <td colspan="2"></td>
-              <td id="mktProbNo" colspan="2"></td>
+              <td colspan="2">{{ predictionYes }}</td>
             </tr>
           </tbody>
         </table>
@@ -56,16 +60,46 @@
 import { defineComponent } from "vue";
 import { Pool } from "../js/pool";
 import { Outcome } from "../js/tokens";
+import { ResolutionEscrow } from "../js/resolutionEscrow";
 
 export default defineComponent({
   props: {
+    outcomeBalances: Array,
+    escrowAccounts: Array[ResolutionEscrow],
     pool: Pool,
+    poolTokens: Number,
+    spotPrices: Array[Number],
   },
-  data() {
-    const outcomeBalances = this.pool.getOutcomeBalances();
-    return {
-      mktYesTokens: outcomeBalances[Outcome.YES],
-    };
+  computed: {
+    marketStatus() {
+      const lpCollateral = this.escrowAccounts
+        .reduce((sum, account) => {
+          let lpThisAcct =
+            account.getLpSpent(Outcome.YES) + account.getLpSpent(Outcome.NO);
+          return sum + lpThisAcct;
+        }, 0)
+        .toFixed(2);
+      const outcomeCollateral = this.escrowAccounts
+        .reduce((sum, account) => {
+          return (
+            sum + account.getSpent(Outcome.YES) + account.getSpent(Outcome.NO)
+          );
+        }, 0)
+        .toFixed(2);
+      return {
+        yesTokens: this.outcomeBalances[Outcome.YES].toFixed(2),
+        noTokens: this.outcomeBalances[Outcome.NO].toFixed(2),
+        lpTokens: (this.poolTokens || 0).toFixed(2),
+        lpCollateral: lpCollateral,
+        outcomeCollateral: outcomeCollateral,
+      };
+    },
+    predictionYes() {
+      return (this.spotPrices[Outcome.YES] * 100).toFixed(2) + "%";
+    },
+    predictionNo() {
+      return (this.spotPrices[Outcome.NO] * 100).toFixed(2) + "%";
+    },
   },
 });
 </script>

@@ -174,8 +174,7 @@
                       type="text"
                       name="liquidityAmt"
                       id="liquidityAmt"
-                      :value="liquidity.amt"
-                      @input="$emit('changeLiquidityAmt', $event.target.value)"
+                      v-model="liquidity.amt"
                       class="focus:ring-indigo-500 focus:border-indigo-500 block w-full pl-7 pr-12 sm:text-sm border-gray-300 rounded-md"
                       placeholder="10.0"
                     />
@@ -191,7 +190,7 @@
                     <select
                       id="liquiditySide"
                       name="liquiditySide"
-                      v-model="liquidity.side"
+                      v-model.number="liquidity.side"
                       class="focus:ring-indigo-500 focus:border-indigo-500 block w-full border-transparent bg-transparent text-gray-900 sm:text-sm rounded-md"
                     >
                       <option>ADD</option>
@@ -271,6 +270,8 @@ export default defineComponent({
       this.newParticipantName = "";
     },
     changeLiquidity() {
+      this.liquidity.amt = parseFloat(this.liquidity.amt);
+      console.log(this.liquidity);
       if (this.liquidity.side === "ADD") {
         this.$emit("on-liquidity-buy", this.liquidity);
       } else {

@@ -83,6 +83,16 @@ export class Pool {
   }
 
   /**
+   * Return an array of spot prices for each outcome
+   * @returns {number[]}
+   */
+  getSpotPrices(): number[] {
+    return Array.from(this.outcomeTokens.keys()).map((outcomeId) =>
+      this.getSpotPriceSansFee(outcomeId)
+    );
+  }
+
+  /**
    *
    * @param {AccountId} sender
    * @param {number} collateralIn
