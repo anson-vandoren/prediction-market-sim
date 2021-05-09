@@ -41,6 +41,7 @@
                   <button
                     type="button"
                     id="resetMarket"
+                    @click="$emit('on-do-payout')"
                     class="py-2 px-4 justify-self-auto mt-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                   >
                     Reset Market
@@ -65,6 +66,7 @@
 import { defineComponent } from "vue";
 
 export default defineComponent({
+  emits: ["on-do-payout"],
   data() {
     return {};
   },

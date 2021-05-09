@@ -93,7 +93,7 @@
                       type="text"
                       name="newBetAmt"
                       id="newBetAmt"
-                      value="10"
+                      v-model.number="shares.amt"
                       class="focus:ring-indigo-500 focus:border-indigo-500 block w-full pl-7 pr-12 sm:text-sm border-gray-300 rounded-md"
                       placeholder="10.0"
                     />
@@ -109,6 +109,7 @@
                     <select
                       id="newBetSide"
                       name="newBetSide"
+                      v-model="shares.outcome"
                       class="focus:ring-indigo-500 focus:border-indigo-500 block w-full border-transparent bg-transparent text-gray-900 sm:text-sm rounded-md"
                     >
                       <option>YES</option>
@@ -123,7 +124,7 @@
                     @click="transactShares"
                     class="py-2 px-4 mt-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                   >
-                    Place Bet
+                    {{ shares.btnLabel }}
                   </button>
                 </div>
               </div>
@@ -147,6 +148,25 @@
                       >
                         {{ account.accountId }}
                       </option>
+                    </select>
+                  </div>
+                </div>
+                <div class="col-span-2">
+                  <label
+                    for="sharesSide"
+                    class="block text-sm font-medium text-gray-700"
+                    >Buy/Sell</label
+                  >
+                  <div class="mt-1 relative rounded-md shadow-sm">
+                    <select
+                      id="sharesSide"
+                      name="sharesSide"
+                      v-model="shares.side"
+                      @change="updateSharesBtnText"
+                      class="focus:ring-indigo-500 focus:border-indigo-500 block w-full border-transparent bg-transparent text-gray-900 sm:text-sm rounded-md"
+                    >
+                      <option>BUY</option>
+                      <option>SELL</option>
                     </select>
                   </div>
                 </div>
@@ -174,7 +194,7 @@
                       type="text"
                       name="liquidityAmt"
                       id="liquidityAmt"
-                      v-model="liquidity.amt"
+                      v-model.number="liquidity.amt"
                       class="focus:ring-indigo-500 focus:border-indigo-500 block w-full pl-7 pr-12 sm:text-sm border-gray-300 rounded-md"
                       placeholder="10.0"
                     />
@@ -190,7 +210,8 @@
                     <select
                       id="liquiditySide"
                       name="liquiditySide"
-                      v-model.number="liquidity.side"
+                      v-model="liquidity.side"
+                      @change="updateLiquidityBtnText"
                       class="focus:ring-indigo-500 focus:border-indigo-500 block w-full border-transparent bg-transparent text-gray-900 sm:text-sm rounded-md"
                     >
                       <option>ADD</option>
@@ -205,7 +226,7 @@
                     @click="changeLiquidity"
                     class="py-2 px-2 justify-self-auto mt-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                   >
-                    Add Liquidity
+                    {{ liquidity.btnLabel }}
                   </button>
                 </div>
               </div>
@@ -252,13 +273,25 @@ export default defineComponent({
     "on-liquidity-buy",
     "on-liquidity-sell",
     "on-buy-outcome",
+    "on-sell-outcome",
     "create-account",
   ],
   data() {
     return {
       newParticipantName: "",
-      shares: { amt: 10, side: "YES", accountId: "alice" },
-      liquidity: { amt: 10, side: "ADD", accountId: "alice" },
+      shares: {
+        amt: 10,
+        outcome: "YES",
+        side: "BUY",
+        accountId: "alice",
+        btnLabel: "Buy Shares",
+      },
+      liquidity: {
+        amt: 10,
+        side: "ADD",
+        accountId: "alice",
+        btnLabel: "Add Liquidity",
+      },
     };
   },
   methods: {
@@ -270,8 +303,6 @@ export default defineComponent({
       this.newParticipantName = "";
     },
     changeLiquidity() {
-      this.liquidity.amt = parseFloat(this.liquidity.amt);
-      console.log(this.liquidity);
       if (this.liquidity.side === "ADD") {
         this.$emit("on-liquidity-buy", this.liquidity);
       } else {
@@ -279,12 +310,28 @@ export default defineComponent({
       }
     },
     transactShares() {
-      const side = this.shares.side === "YES" ? Outcome.YES : Outcome.NO;
-      this.$emit("on-buy-outcome", {
-        amt: this.shares.amt,
-        accountId: this.shares.accountId,
-        side: side,
-      });
+      const outcome = this.shares.outcome === "YES" ? Outcome.YES : Outcome.NO;
+      if (this.shares.side === "BUY") {
+        this.$emit("on-buy-outcome", {
+          amt: this.shares.amt,
+          accountId: this.shares.accountId,
+          outcome: outcome,
+        });
+      } else {
+        this.$emit("on-sell-outcome", {
+          amt: this.shares.amt,
+          accountId: this.shares.accountId,
+          outcome: outcome,
+        });
+      }
+    },
+    updateLiquidityBtnText() {
+      this.liquidity.btnLabel =
+        this.liquidity.side === "ADD" ? "Add Liquidity" : "Remove Liquidity";
+    },
+    updateSharesBtnText() {
+      this.shares.btnLabel =
+        this.shares.side === "BUY" ? "Buy Shares" : "Sell Shares";
     },
   },
 });

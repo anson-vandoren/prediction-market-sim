@@ -1,5 +1,5 @@
 import { MintableFungibleToken } from "./tokens";
-import { AccountId, OptionalAccount } from "./types";
+import { AccountId } from "./types";
 import { ResolutionEscrows } from "./resolutionEscrow";
 import { newtonRaphson } from "@fvictorio/newton-raphson-method";
 import { Big } from "big.js";
@@ -13,9 +13,9 @@ export class Pool {
   outcomeTokens: Map<number, MintableFungibleToken>; // map of outcomeId -> Token for each outcome
   poolToken: MintableFungibleToken; // the liquidity pool token
   swapFee: number; // transaction fee associated with buying/selling outcome tokens (between 0-1)
-  withdrawnFees: Map<AccountId, number>; // pool fees already withdrawn on a per-liquidity-provider basis
-  totalWithdrawnFees: number; // total of all fees withdrawn by liquidity providers from the pool
-  feePoolWeight: number; // TODO: need to figure out precisely what this is and probably name it better
+  weightedShares: Map<AccountId, number>; // pool fees already withdrawn on a per-liquidity-provider basis
+  totalWeightedShares: number; // total of all fees withdrawn by liquidity providers from the pool
+  weightedPool: number; // LP tokens + fees collected, weighted
   resolutionEscrow: ResolutionEscrows; // details about users of this pool
 
   constructor(outcomes: number, swapFee: number) {
@@ -39,9 +39,9 @@ export class Pool {
       ])
     );
     this.poolToken = new MintableFungibleToken(outcomes, 0);
-    this.withdrawnFees = new Map<AccountId, number>();
-    this.feePoolWeight = 0;
-    this.totalWithdrawnFees = 0;
+    this.weightedShares = new Map<AccountId, number>();
+    this.weightedPool = 0;
+    this.totalWeightedShares = 0;
     this.resolutionEscrow = new ResolutionEscrows();
     logger.logPool(this);
   }
@@ -88,7 +88,7 @@ export class Pool {
    */
   getSpotPrices(): number[] {
     return Array.from(this.outcomeTokens.keys()).map((outcomeId) =>
-      this.getSpotPriceSansFee(outcomeId)
+      this.getSpotPrice(outcomeId)
     );
   }
 
@@ -318,93 +318,97 @@ export class Pool {
     );
   }
 
+  getAccountBalances(accountId: AccountId): number[] {
+    return Array.from(this.outcomeTokens.entries()).map(([_outcomeId, token]) =>
+      token.getBalance(accountId)
+    );
+  }
+
   mintPoolTokens(to: AccountId, amount: number): void {
-    this.beforePoolTokenTransfer(null, to, amount);
+    this.beforeMintPoolTokens(to, amount);
     this.poolToken.mint(to, amount);
   }
 
   burnPoolTokensReturnFees(from: AccountId, amount: number): number {
-    const fees = this.beforePoolTokenTransfer(from, null, amount);
+    const fees = this.beforeBurnPoolTokens(from, amount);
     this.poolToken.burn(from, amount);
     return fees;
   }
 
-  beforePoolTokenTransfer(
-    from: OptionalAccount,
-    to: OptionalAccount,
-    amount: number
-  ): number {
-    let fees = 0;
-    if (from) {
-      // on transfer or burn pool tokens
-      fees = this.withdrawFees(from);
-    }
+  getFeesWithdrawable(accountId: AccountId): number {
+    const totalFees = this.weightedPool * this.accountPoolRatio(accountId);
 
+    const previouslyWithdrawn = this.weightedShares.get(accountId) ?? 0;
+    // TODO: this seems like you can join a pool with fees already collected, then
+    //       immediately leave and withdraw to keep some of the fees
+    return totalFees - previouslyWithdrawn;
+  }
+
+  poolRatio(poolTokens: number): number {
     const totalSupply = this.poolToken.totalSupply;
-    // ineligible fees are those that are specifically associated with this transaction (?)
-    // if there are no pool tokens, there are no eligible fees, hence total amount is ineligible
-    // otherwise, this transaction's fraction of the total pool supply is the fraction of total fees ineligible
-    const ineligibleFeeAmt =
-      totalSupply === 0 ? amount : this.feePoolWeight * (amount / totalSupply);
-
-    if (from) {
-      // on transfer or burn pool tokens
-      const withdrawnFees = this.withdrawnFees.get(from);
-      if (withdrawnFees == null) {
-        throw new Error(`Cannot transfer/burn pool tokens for ${from}`);
-      }
-
-      // as part of the burn/transfer, the `from` account's fees will be withdrawn
-      // (not including the fees generated from this transaction's amount)
-      // TODO: this essentially undoes `withdrawFees()` earlier for the ineligible amount...
-      this.withdrawnFees.set(from, withdrawnFees - ineligibleFeeAmt);
-
-      logger.logWithdrawnFees(
-        this.poolToken,
-        from,
-        withdrawnFees - ineligibleFeeAmt
+    // if there are no pool tokens yet, then any number added would be 100%
+    if (totalSupply === 0) {
+      console.error(
+        `there were no initial pool tokens, so the ratio of ${poolTokens} is taken to be 100%`
       );
-
-      this.totalWithdrawnFees -= ineligibleFeeAmt;
-    } else {
-      // on mint pool tokens
-      // the fees from this transaction are added to total pool fees collected
-      this.feePoolWeight += ineligibleFeeAmt;
     }
+    return totalSupply ? poolTokens / totalSupply : 1;
+  }
 
-    if (to) {
-      // on transfer or mint
-      const withdrawnFees = this.withdrawnFees.get(to) ?? 0;
-      this.withdrawnFees.set(to, withdrawnFees + ineligibleFeeAmt);
+  beforeMintPoolTokens(to: AccountId, toMint: number): void {
+    const addToPool = this.shareOfPool(toMint);
 
-      logger.logWithdrawnFees(
-        this.poolToken,
-        to,
-        withdrawnFees + ineligibleFeeAmt
-      );
+    const prevWeightedShare = this.weightedShares.get(to) ?? 0;
+    let newWeightedShare = prevWeightedShare + addToPool;
+    this.weightedShares.set(to, newWeightedShare);
 
-      this.totalWithdrawnFees += ineligibleFeeAmt;
-    } else {
-      // on burn pool tokens
-      // LP tokens were burned, and ineligible fees for this transaction are being returned
-      this.feePoolWeight -= ineligibleFeeAmt;
+    logger.logWeightedShares(this.poolToken, to, newWeightedShare);
+
+    this.totalWeightedShares += addToPool;
+    // the fees from this transaction are added to total pool fees collected
+    this.weightedPool += addToPool;
+
+    logger.logPool(this);
+  }
+
+  beforeBurnPoolTokens(from: AccountId, toBurn: number): number {
+    const removeFromPool = this.shareOfPool(toBurn);
+
+    // on transfer or burn pool tokens
+    const prevWeightedShares = this.weightedShares.get(from);
+    if (!prevWeightedShares) {
+      throw new Error(`Cannot transfer/burn pool tokens for ${from}`);
     }
+    const newWeightedShares = prevWeightedShares - removeFromPool;
+    this.weightedShares.set(from, newWeightedShares);
+
+    logger.logWeightedShares(this.poolToken, from, newWeightedShares);
+
+    this.totalWeightedShares -= removeFromPool;
+    this.weightedPool -= removeFromPool;
 
     logger.logPool(this);
 
-    return fees;
+    return this.withdrawFees(from);
   }
 
-  getFeesWithdrawable(accountId: AccountId): number {
-    const poolTokenBal = this.poolToken.getBalance(accountId);
-    const poolTokenTotalSupply = this.poolToken.totalSupply;
-    const rawAmount =
-      this.feePoolWeight * (poolTokenBal / poolTokenTotalSupply);
+  /**
+   * returns the weighted number of shares to add to or remove from the pool
+   * given a number of pool (LP) tokens that will be minted or burned
+   * @param {number} poolTokensTransacted
+   * @returns {number}
+   * @private
+   */
+  private shareOfPool(poolTokensTransacted: number) {
+    const lpBalance = this.poolToken.totalSupply;
+    const feesToLp = lpBalance === 0 ? 0 : this.weightedPool / lpBalance - 1;
 
-    const ineligibleFeeAmount = this.withdrawnFees.get(accountId) ?? 0;
-    // TODO: this seems like you can join a pool with fees already collected, then
-    //       immediately leave and withdraw to keep some of the fees
-    return rawAmount - ineligibleFeeAmount;
+    return poolTokensTransacted * (1 + feesToLp);
+  }
+
+  accountPoolRatio(accountId: AccountId): number {
+    const poolTokens = this.poolToken.getBalance(accountId);
+    return this.poolRatio(poolTokens);
   }
 
   /**
@@ -413,19 +417,17 @@ export class Pool {
    * @returns {number}: portion of the fees in the pool that belong to `accountId`
    */
   withdrawFees(accountId: AccountId): number {
-    const theirPoolTokens = this.poolToken.getBalance(accountId);
-    const totalPoolTokens = this.poolToken.totalSupply;
-    const poolRatio = theirPoolTokens / totalPoolTokens;
+    const poolRatio = this.accountPoolRatio(accountId);
 
-    const totalFeesForThisAccount = this.feePoolWeight * poolRatio;
+    const totalFeesForThisAccount = this.weightedPool * poolRatio;
 
-    const previouslyWithdrawn = this.withdrawnFees.get(accountId) ?? 0;
+    const previouslyWithdrawn = this.weightedShares.get(accountId) ?? 0;
     const withdrawableAmount = totalFeesForThisAccount - previouslyWithdrawn;
 
     if (withdrawableAmount > 0) {
-      this.withdrawnFees.set(accountId, totalFeesForThisAccount);
-      this.totalWithdrawnFees += withdrawableAmount;
-      logger.logWithdrawnFees(
+      this.weightedShares.set(accountId, totalFeesForThisAccount);
+      this.totalWeightedShares += withdrawableAmount;
+      logger.logWeightedShares(
         this.poolToken,
         accountId,
         totalFeesForThisAccount
@@ -516,11 +518,11 @@ export class Pool {
       return otherDeltasProduct.mul(thisOutcomeDelta).minus(originalInvariant);
     };
 
-    const r = newtonRaphson(f, 0, { maxIterations: 100 });
+    const r: Big | false = newtonRaphson(f, 0, { maxIterations: 100 });
 
     if (r) {
       // TODO: need a way to sell ALL shares of an outcome
-      return r.round(4).toNumber();
+      return parseFloat(r.round(4).toString());
     }
     throw new Error(
       `could not calculate collateral resulting from sale of ${tokensToSell} of outcome '${outcomeId}`
@@ -572,7 +574,7 @@ export class Pool {
     const escrowAccount = this.resolutionEscrow.getOrNew(sender);
 
     const fee = amountIn * this.swapFee;
-    this.feePoolWeight += fee; // TODO: rename feePoolWeight - is it total fees collected, or fees collected that haven't been withdrawn yet?
+    this.weightedPool += fee; // TODO: rename feePoolWeight - is it total fees collected, or fees collected that haven't been withdrawn yet?
 
     const spent = escrowAccount.addToSpent(outcomeTarget, amountIn - fee);
     logger.logAccountOutcomeSpent(sender, outcomeTarget, spent);
@@ -632,7 +634,7 @@ export class Pool {
     // remove the tokens from sender and return to the pool
     tokenIn.safeTransferInternal(sender, this.getOwnAccount(), sharesIn);
 
-    this.feePoolWeight += fee;
+    this.weightedPool += fee;
 
     let toEscrow: number;
     if (sellPrice < avgPrice) {
@@ -696,12 +698,13 @@ export class Pool {
     // TODO: this isn't right?
     const sharesIn = this.calcSellCollateralOut(amountOut, outcomeTarget);
 
-    if (sharesIn > maxSharesIn) {
+    if (sharesIn - maxSharesIn >= 0.0001) {
       throw new Error(
         `cannot sell ${sharesIn} as it's above maxSharesIn=${maxSharesIn}`
       );
     }
     const tokenIn = this.outcomeTokens.get(outcomeTarget);
+    console.log("tokensIn before sale: ", tokenIn);
     if (!tokenIn) {
       throw new Error(`no token for outcome '${outcomeTarget}'`);
     }
@@ -721,8 +724,9 @@ export class Pool {
 
     // remove the tokens from sender and return to the pool
     tokenIn.safeTransferInternal(sender, this.getOwnAccount(), sharesIn);
+    console.log("tokenIn after sale: ", tokenIn);
 
-    this.feePoolWeight += fee;
+    this.weightedPool += fee;
 
     let toEscrow: number;
     if (sellPrice < avgPrice) {
@@ -788,12 +792,18 @@ export class Pool {
     return this.sell(sender, expectedCollateral, outcomeTarget, sharesIn);
   }
 
-  payout(accountId: AccountId, payoutNumerators?: number[]) {
+  payout(
+    accountId: AccountId,
+    payoutNumerators?: number[],
+    testRun: Boolean = false
+  ): number {
     const poolTokenBalance = this.getPoolTokenBalance(accountId);
     const feesEarned =
       poolTokenBalance > 0 ? this.exitPool(accountId, poolTokenBalance) : 0;
 
-    const balances = this.getAndClearBalances(accountId);
+    const balances = testRun
+      ? this.getAccountBalances(accountId)
+      : this.getAndClearBalances(accountId);
     const escrowAccount = this.resolutionEscrow.get(accountId);
     if (!escrowAccount) {
       return 0;
@@ -816,7 +826,9 @@ export class Pool {
         }) + escrowAccount.invalid;
     }
 
-    this.resolutionEscrow.remove(accountId);
+    if (!testRun) {
+      this.resolutionEscrow.remove(accountId);
+    }
 
     return payout + feesEarned;
   }
@@ -850,7 +862,8 @@ export class Pool {
   }
 
   /**
-   * returns the cost to buy one marginal outcome token, including the fee
+   * returns the cost to have bought the previous marginal outcome token, including the fee
+   * NOTE: the cost to buy the next marginal outcome token will be different
    * @param {number} targetOutcome
    * @returns {number}
    */
@@ -867,10 +880,7 @@ export class Pool {
   getSpotPriceSansFee(targetOutcome: number): number {
     // https://docs.gnosis.io/conditionaltokens/docs/introduction3/
     // oddsForOutcome = oddsWeightForOutcome / sum(oddsWeightForOutcome for every outcome)
-    // const weights = this.getOutcomeBalances().map((_, outcomeId) =>
-    //   this.oddsWeightForOutcome(outcomeId)
-    // );
-    const weights = [...this.outcomeTokens.keys()].map((_, outcomeId) =>
+    const weights = [...this.outcomeTokens.keys()].map((outcomeId) =>
       this.oddsWeightForOutcome(outcomeId)
     );
     const summedWeights = weights.reduce((sum, weight) => sum + weight);

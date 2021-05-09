@@ -69,12 +69,12 @@ export class MintableFungibleToken {
    * @returns {number}: balance of this token accountId possessed before removal
    */
   removeAccount(accountId: AccountId): number {
-    const account = this.accounts.get(accountId);
-    if (!account) {
-      throw new Error(`cannot remove accountId=${accountId} - doesn't exist`);
+    const balance = this.accounts.get(accountId);
+    if (!balance) {
+      return 0;
     }
     this.accounts.delete(accountId);
-    return account;
+    return balance;
   }
 
   deposit(receiverId: AccountId, amount: number): void {
@@ -92,10 +92,12 @@ export class MintableFungibleToken {
     const senderBalance = this.accounts.get(senderId) ?? 0;
 
     if (amount <= 0) {
-      return new Error("Cannot withdraw 0 or lower");
+      throw new Error("Cannot withdraw 0 or lower");
     }
-    if (amount > senderBalance) {
-      return new Error("Not enough balance");
+    if (amount - senderBalance >= 0.0001) {
+      throw new Error(
+        `Not enough balance. ${senderId} has ${senderBalance}, which is less than ${amount}`
+      );
     }
 
     const newBalance = senderBalance - amount;

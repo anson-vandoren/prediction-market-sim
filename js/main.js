@@ -9,17 +9,9 @@ function resetSimulation() {
   pool = new Pool(outcomes, swapFee);
 }
 
-function updateLiquiditySideBtn(evt) {
-  const ref = document.getElementById("changeLiquidity");
-  let side = evt.target.value.toLowerCase();
-  side = side.charAt(0).toUpperCase() + side.slice(1);
-  ref.innerText = side + " Liquidity";
-}
-
 function init() {
   document.getElementById("resetMarket").onclick = resetSimulation;
   const liquidityBtn = document.getElementById("liquiditySide");
-  liquidityBtn.onchange = updateLiquiditySideBtn;
   liquidityBtn.dispatchEvent(new Event("change"));
 }
 

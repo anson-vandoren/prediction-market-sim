@@ -10,8 +10,9 @@
             :pool-tokens="poolTokens"
             :spot-prices="spotPrices"
             :pool="pool"
+            :ready-to-payout="readyToPayout"
           ></MarketTable>
-          <MarketControls></MarketControls>
+          <MarketControls @on-do-payout="readyToPayout = true"></MarketControls>
         </div>
 
         <div id="rightCol">
@@ -26,6 +27,7 @@
             @on-liquidity-buy="onLiquidityBuy"
             @on-liquidity-sell="onLiquiditySell"
             @on-buy-outcome="onBuyOutcome"
+            @on-sell-outcome="onSellOutcome"
           ></ParticipantControls>
         </div>
       </div>
@@ -55,11 +57,12 @@ export default defineComponent({
       outcomeBalances: this.pool.getOutcomeBalances(),
       poolTokens: this.pool.poolToken.totalSupply,
       spotPrices: this.pool.getSpotPrices(),
-      collateralBank: { alice: 0 },
+      collateralBank: { poolOwner: 0, alice: 0 },
+      readyToPayout: false,
     };
   },
   beforeCreate() {
-    this.pool = new Pool(2, 0);
+    this.pool = new Pool(2, 0.02);
     this.pool.resolutionEscrow.getOrNew("alice");
   },
   methods: {
@@ -72,18 +75,33 @@ export default defineComponent({
       const weightIndications =
         this.pool.poolToken.totalSupply === 0 ? [1, 1] : undefined;
       this.pool.addLiquidity(accountId, amt, weightIndications);
-      this.updateFromPool();
       this.updateCollateralBank(accountId, -amt);
+      this.updateFromPool();
     },
     onLiquiditySell({ amt, accountId }) {
       const received = this.pool.exitPool(accountId, amt);
-      this.updateFromPool();
       this.updateCollateralBank(accountId, received);
-    },
-    onBuyOutcome({ amt, accountId, side }) {
-      this.pool.buy(accountId, amt, side);
       this.updateFromPool();
+    },
+    onBuyOutcome({ amt, accountId, outcome }) {
+      this.pool.buy(accountId, amt, outcome);
       this.updateCollateralBank(accountId, -amt);
+      this.updateFromPool();
+    },
+    onSellOutcome({ amt, accountId, outcome }) {
+      const expectedCollateral = this.pool.calcCollateralReturnedForSellingOutcome(
+        amt,
+        outcome
+      );
+      const escrowed = this.pool.sell(
+        accountId,
+        expectedCollateral,
+        outcome,
+        amt
+      );
+      const returned = expectedCollateral - escrowed;
+      this.updateCollateralBank(accountId, returned);
+      this.updateFromPool();
     },
     updateFromPool() {
       this.escrowAccounts = [

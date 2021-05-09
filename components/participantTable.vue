@@ -40,7 +40,7 @@
               <td>{{ participant.collateralNo }}</td>
               <td>{{ participant.tokensPool }}</td>
               <td>{{ participant.collateralPool }}</td>
-              <td>{{ collateralBank[participant.name] }}</td>
+              <td>{{ collateralBank[participant.name].toFixed(2) }}</td>
             </tr>
           </tbody>
         </table>

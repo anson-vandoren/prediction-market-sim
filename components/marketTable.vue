@@ -45,9 +45,42 @@
           </thead>
           <tbody>
             <tr>
-              <td colspan="2">{{ predictionNo }}</td>
-              <td colspan="2"></td>
               <td colspan="2">{{ predictionYes }}</td>
+              <td colspan="2"></td>
+              <td colspan="2">{{ predictionNo }}</td>
+            </tr>
+          </tbody>
+
+          <!-- Resolves as YES -->
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="text-lg font-semibold text-gray-900" colspan="6">
+                If resolves as YES...
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="account of payouts.YES" :id="account.accountId">
+              <td colspan="2">{{ account.accountId }}</td>
+
+              <td colspan="2"></td>
+              <td colspan="2">{{ account.payout }}</td>
+            </tr>
+          </tbody>
+
+          <!-- Resolves as NO -->
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="text-lg font-semibold text-gray-900" colspan="6">
+                If resolves as NO...
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="account of payouts.NO" :id="account.accountId">
+              <td colspan="2">{{ account.accountId }}</td>
+              <td colspan="2"></td>
+              <td colspan="2">{{ account.payout }}</td>
             </tr>
           </tbody>
         </table>
@@ -69,6 +102,7 @@ export default defineComponent({
     pool: Pool,
     poolTokens: Number,
     spotPrices: Array[Number],
+    readyToPayout: Boolean,
   },
   computed: {
     marketStatus() {
@@ -99,6 +133,31 @@ export default defineComponent({
     },
     predictionNo() {
       return (this.spotPrices[Outcome.NO] * 100).toFixed(2) + "%";
+    },
+    payouts() {
+      if (!this.readyToPayout) {
+        return { YES: {}, NO: {} };
+      }
+      const payoutsNo = this.escrowAccounts.map((account) => {
+        return account.accountId
+          ? {
+              accountId: account.accountId,
+              payout: this.pool.payout(account.accountId, [1, 0], true),
+            }
+          : {};
+      });
+      const payoutsYes = this.escrowAccounts.map((account) => {
+        return account.accountId
+          ? {
+              accountId: account.accountId,
+              payout: this.pool.payout(account.accountId, [0, 1], false),
+            }
+          : {};
+      });
+      return {
+        NO: payoutsNo,
+        YES: payoutsYes,
+      };
     },
   },
 });

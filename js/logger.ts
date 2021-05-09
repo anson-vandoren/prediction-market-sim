@@ -140,16 +140,16 @@ function logPool(pool: Pool) {
     params: {
       outcomes: pool.outcomes,
       swapFee: pool.swapFee,
-      totalWithdrawnFees: pool.totalWithdrawnFees,
-      feePoolWeight: pool.feePoolWeight,
+      totalWeightedShares: pool.totalWeightedShares,
+      weightedPool: pool.weightedPool,
     },
   };
   console.info(JSON.stringify(data));
 }
-function logWithdrawnFees(
+function logWeightedShares(
   poolToken: MintableFungibleToken,
   accountId: AccountId,
-  withdrawnAmount: number
+  weightedShares: number
 ) {
   const data = {
     type: "withdrawnFees",
@@ -157,7 +157,7 @@ function logWithdrawnFees(
       id: `wf_${poolToken.outcomeId}_${accountId}`,
       outcomeId: poolToken.outcomeId,
       accountId,
-      withdrawnAmount,
+      weightedShares: weightedShares,
     },
   };
   console.info(JSON.stringify(data));
@@ -168,7 +168,7 @@ export const logger = {
   logBuy,
   logSell,
   logPool,
-  logWithdrawnFees,
+  logWeightedShares: logWeightedShares,
   TransactionType,
   logTransaction,
   logToValidEscrow,
