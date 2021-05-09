@@ -11,6 +11,7 @@
             :spot-prices="spotPrices"
             :pool="pool"
             :ready-to-payout="readyToPayout"
+            :net-collateral="pool.netCollateral"
           ></MarketTable>
           <MarketControls @on-do-payout="readyToPayout = true"></MarketControls>
         </div>

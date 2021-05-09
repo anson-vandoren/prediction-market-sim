@@ -7,7 +7,7 @@
         <table class="min-w-full divide-y divide-gray-200">
           <thead class="bg-gray-50">
             <tr>
-              <th colspan="5" class="text-lg py-3 font-semibold text-gray-900">
+              <th colspan="6" class="text-lg py-3 font-semibold text-gray-900">
                 Market Status
               </th>
             </tr>
@@ -17,6 +17,7 @@
               <th class="th-regular">LP Tokens</th>
               <th class="th-regular">Liquidity Collateral</th>
               <th class="th-regular">Bet Collateral</th>
+              <th class="th-regular">Net Collateral</th>
             </tr>
           </thead>
           <tbody>
@@ -32,6 +33,7 @@
               <td id="mktBetCollateral">
                 {{ marketStatus.outcomeCollateral }}
               </td>
+              <td>{{ netCollateral }}</td>
             </tr>
           </tbody>
           <thead class="bg-gray-50">
@@ -103,6 +105,7 @@ export default defineComponent({
     poolTokens: Number,
     spotPrices: Array[Number],
     readyToPayout: Boolean,
+    netCollateral: Number,
   },
   computed: {
     marketStatus() {

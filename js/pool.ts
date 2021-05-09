@@ -13,10 +13,9 @@ export class Pool {
   outcomeTokens: Map<number, MintableFungibleToken>; // map of outcomeId -> Token for each outcome
   poolToken: MintableFungibleToken; // the liquidity pool token
   swapFee: number; // transaction fee associated with buying/selling outcome tokens (between 0-1)
-  accruedShares: Map<AccountId, number>; // pool fees already withdrawn on a per-liquidity-provider basis
-  accruedPool: number; // total of all fees withdrawn by liquidity providers from the pool
-  totalPool: number; // LP tokens + fees collected, weighted
   resolutionEscrow: ResolutionEscrows; // details about users of this pool
+  accruedFees: Map<AccountId, number>; // pool fees accrued by each active account
+  netCollateral: number;
 
   constructor(outcomes: number, swapFee: number) {
     // bounds-check outcomes
@@ -39,10 +38,9 @@ export class Pool {
       ])
     );
     this.poolToken = new MintableFungibleToken(outcomes, 0);
-    this.accruedShares = new Map<AccountId, number>();
-    this.totalPool = 0;
-    this.accruedPool = 0;
+    this.accruedFees = new Map<AccountId, number>();
     this.resolutionEscrow = new ResolutionEscrows();
+    this.netCollateral = 0;
     logger.logPool(this);
   }
 
@@ -175,6 +173,7 @@ export class Pool {
       toMint,
       this.outcomes
     );
+    this.netCollateral += collateralIn;
   }
 
   mintAndTransferOutcomeToken(
@@ -259,7 +258,12 @@ export class Pool {
     });
 
     // burn liquidity tokens that are exited
-    return this.burnPoolTokensReturnFees(sender, poolTokensToExit);
+    const feesReturned = this.burnPoolTokensReturnFees(
+      sender,
+      poolTokensToExit
+    );
+    this.netCollateral -= feesReturned;
+    return feesReturned;
   }
 
   burnOutcomeTokensRedeemCollateral(sender: AccountId, toBurn: number): number {
@@ -325,126 +329,44 @@ export class Pool {
   }
 
   mintPoolTokens(to: AccountId, amount: number): void {
-    this.updateWeightedShares(to, amount);
+    // this.updateWeightedShares(to, amount);
     this.poolToken.mint(to, amount);
   }
 
-  burnPoolTokensReturnFees(from: AccountId, amount: number): number {
-    console.log(
-      `totalPool: ${this.totalPool}\naccruedPool: ${
-        this.accruedPool
-      }\naccruedShares: ${this.accruedShares.get(from)}`
-    );
-
-    const fees = this.accrueFees(from);
-
-    console.log("***fees withdrawn");
-    console.log(
-      `totalPool: ${this.totalPool}\naccruedPool: ${
-        this.accruedPool
-      }\naccruedShares: ${this.accruedShares.get(from)}`
-    );
-
-    this.updateWeightedShares(from, -amount);
-
-    console.log("***weighted shares updated");
-    console.log(
-      `totalPool: ${this.totalPool}\naccruedPool: ${
-        this.accruedPool
-      }\naccruedShares: ${this.accruedShares.get(from)}`
-    );
+  private burnPoolTokensReturnFees(from: AccountId, amount: number): number {
+    const totalAcctPoolTokens = this.poolToken.getBalance(from);
+    const fractionBurnt = totalAcctPoolTokens
+      ? amount / totalAcctPoolTokens
+      : 1;
 
     this.poolToken.burn(from, amount);
-    return fees;
+    const totalFees = this.accruedFees.get(from) ?? 0;
+    const feesToReturn = totalFees * fractionBurnt;
+    this.accruedFees.set(from, totalFees - feesToReturn);
+    return feesToReturn;
   }
 
   getFeesWithdrawable(accountId: AccountId): number {
-    const shareOfTotalWeightedPool =
-      this.totalPool * this.accountLpTokenRatio(accountId);
-
-    const previouslyAccrued = this.accruedShares.get(accountId) ?? 0;
-    // TODO: this seems like you can join a pool with fees already collected, then
-    //       immediately leave and withdraw to keep some of the fees
-    return shareOfTotalWeightedPool - previouslyAccrued;
+    return this.accruedFees.get(accountId) ?? 0;
   }
 
-  lpTokenRatio(poolTokens: number): number {
-    const lpBalance = this.poolToken.totalSupply;
-    // if there are no pool tokens yet, then any number added would be 100%
-    if (lpBalance === 0) {
-      console.error(
-        `there were no initial pool tokens, so the ratio of ${poolTokens} is taken to be 100%`
+  accrueFeeToLpHolders(fee: number): void {
+    const totalLpTokens = this.poolToken.totalSupply;
+    const lpFractions: [string, number][] = [
+      ...this.poolToken.accounts.keys(),
+    ].map((accountId) => {
+      return [accountId, this.poolToken.getBalance(accountId) / totalLpTokens];
+    });
+    lpFractions.forEach(([accountId, fraction]) => {
+      const feePart = fraction * fee;
+      const prevFees = this.accruedFees.get(accountId) ?? 0;
+      this.accruedFees.set(accountId, prevFees + feePart);
+      console.log(
+        `added ${feePart} (${fraction} of ${fee}) to ${accountId}'s account for a total of ${
+          prevFees + feePart
+        }`
       );
-    }
-    return lpBalance ? poolTokens / lpBalance : 1;
-  }
-
-  /**
-   * updates the weighted pool shares (LP + fees) when either burning or
-   * minting pool tokens
-   * @param {AccountId} account
-   * @param {number} poolTokens
-   * @returns {number}
-   */
-  updateWeightedShares(account: AccountId, poolTokens: number): void {
-    const deltaShares = this.shareOfPool(poolTokens);
-
-    const accruedShares = this.accruedShares.get(account) ?? 0;
-    if (poolTokens < 0 && accruedShares === 0) {
-      throw new Error(
-        `Cannot deduct ${accruedShares} for ${account} with zero pool balance`
-      );
-    }
-
-    // add or subtract based on sign of `poolTokens`
-    const newAccruedShares = accruedShares + deltaShares;
-    this.accruedShares.set(account, newAccruedShares);
-
-    logger.logWeightedShares(this.poolToken, account, newAccruedShares);
-
-    this.accruedPool += deltaShares;
-    this.totalPool += deltaShares;
-  }
-
-  /**
-   * returns the weighted number of shares to add to or remove from the pool
-   * given a number of pool (LP) tokens that will be minted or burned
-   * @param {number} poolTokensTransacted
-   * @returns {number}
-   * @private
-   */
-  private shareOfPool(poolTokensTransacted: number) {
-    const lpBalance = this.poolToken.totalSupply;
-    const feesToLp = lpBalance === 0 ? 0 : this.totalPool / lpBalance - 1;
-
-    return poolTokensTransacted * (1 + feesToLp);
-  }
-
-  accountLpTokenRatio(accountId: AccountId): number {
-    const poolTokens = this.poolToken.getBalance(accountId);
-    return this.lpTokenRatio(poolTokens);
-  }
-
-  /**
-   * withdraws and returns `accountId`s portion of collected fees
-   * @param {AccountId} accountId: account that is withdrawing fees
-   * @returns {number}: portion of the fees in the pool that belong to `accountId`
-   */
-  accrueFees(accountId: AccountId): number {
-    const lpTokenRatio = this.accountLpTokenRatio(accountId);
-
-    const newWeightedShares = this.totalPool * lpTokenRatio;
-
-    const weightedLpThisAcct = this.accruedShares.get(accountId) ?? 0;
-    const shareOfFees = newWeightedShares - weightedLpThisAcct;
-
-    if (shareOfFees > 0) {
-      this.accruedShares.set(accountId, newWeightedShares);
-      this.accruedPool += shareOfFees;
-      logger.logWeightedShares(this.poolToken, accountId, newWeightedShares);
-    }
-
-    return shareOfFees;
+    });
   }
 
   /**
@@ -571,24 +493,24 @@ export class Pool {
     return outcomeSharesToSell;
   }
 
-  buy(sender: AccountId, amountIn: number, outcomeTarget: number): void {
+  buy(sender: AccountId, collateralIn: number, outcomeTarget: number): void {
     this.assertValidOutcome(outcomeTarget);
 
-    const sharesOut = this.calcBuyAmount(amountIn, outcomeTarget);
+    const sharesOut = this.calcBuyAmount(collateralIn, outcomeTarget);
     if (sharesOut < this.minOutcomesBought()) {
       throw new Error(`must buy at least ${this.minOutcomesBought()} shares`);
     }
 
     const escrowAccount = this.resolutionEscrow.getOrNew(sender);
 
-    const fee = amountIn * this.swapFee;
-    this.totalPool += fee;
+    const fee = collateralIn * this.swapFee;
+    this.accrueFeeToLpHolders(fee);
 
-    const spent = escrowAccount.addToSpent(outcomeTarget, amountIn - fee);
+    const spent = escrowAccount.addToSpent(outcomeTarget, collateralIn - fee);
     logger.logAccountOutcomeSpent(sender, outcomeTarget, spent);
 
-    // mint `amountIn` new tokens for each outcome
-    const tokensToMint = amountIn - fee;
+    // mint `collateralIn` new tokens for each outcome
+    const tokensToMint = collateralIn - fee;
     this.addToPools(tokensToMint);
 
     // transfer the bought tokens back to the sender
@@ -598,113 +520,20 @@ export class Pool {
     }
     tokenOut.safeTransferInternal(this.getOwnAccount(), sender, sharesOut);
 
-    logger.logBuy(sender, outcomeTarget, amountIn, sharesOut, fee);
+    logger.logBuy(sender, outcomeTarget, collateralIn, sharesOut, fee);
     logger.logPool(this);
-  }
-
-  sell2(
-    sender: AccountId,
-    sharesIn: number,
-    outcomeTarget: number,
-    maxSharesIn: number
-  ): number {
-    this.assertValidOutcome(outcomeTarget);
-    // TODO: this isn't right?
-    // const sharesIn = this.calcSellCollateralOut(amountOut, outcomeTarget);
-    const amountOut = this.calcCollateralReturnedForSellingOutcome(
-      sharesIn,
-      outcomeTarget
-    );
-
-    if (sharesIn > maxSharesIn) {
-      throw new Error(
-        `cannot sell ${sharesIn} as it's above maxSharesIn=${maxSharesIn}`
-      );
-    }
-    const tokenIn = this.outcomeTokens.get(outcomeTarget);
-    if (!tokenIn) {
-      throw new Error(`no token for outcome '${outcomeTarget}'`);
-    }
-
-    const escrowAccount = this.resolutionEscrow.getOrFail(sender);
-    const spent = escrowAccount.getSpent(outcomeTarget);
-    // TODO: why is this based on `spent`? how to tell how many shares of the outcome they actually have?
-    //       use tokenIn.getBalance(sender) instead?
-    if (spent <= 0) {
-      throw new Error(`${sender} has no balance of outcome '${outcomeTarget}'`);
-    }
-
-    // TODO: redo math and try to fit it into resolutionEscrow... (from upstream)
-    const fee = amountOut * this.swapFee;
-    const avgPrice = spent / tokenIn.getBalance(sender);
-    const sellPrice = (amountOut + fee) / sharesIn;
-
-    // remove the tokens from sender and return to the pool
-    tokenIn.safeTransferInternal(sender, this.getOwnAccount(), sharesIn);
-
-    this.totalPool += fee;
-
-    let toEscrow: number;
-    if (sellPrice < avgPrice) {
-      const priceDelta = avgPrice - sellPrice;
-      const escrowAmt = priceDelta * sharesIn;
-      const invalidEscrow = escrowAccount.addToEscrowInvalid(escrowAmt);
-      logger.logToInvalidEscrow(sender, invalidEscrow);
-
-      // TODO: sub from spent and logging is done in both cases, remove dup code
-      const newSpent = escrowAccount.subFromSpent(
-        outcomeTarget,
-        amountOut + escrowAmt + fee
-      );
-      logger.logAccountOutcomeSpent(sender, outcomeTarget, newSpent);
-      toEscrow = 0;
-    } else if (sellPrice > avgPrice) {
-      const priceDelta = sellPrice - avgPrice;
-      const escrowAmt = priceDelta * sharesIn;
-      const validEscrow = escrowAccount.addToEscrowValid(escrowAmt);
-      logger.logToValidEscrow(sender, validEscrow);
-      const entriesToSub = amountOut - escrowAmt + fee;
-
-      // TODO: entriesToSub should never be larger than spent
-      if (entriesToSub > spent) {
-        const newSpent = escrowAccount.subFromSpent(outcomeTarget, spent);
-        logger.logAccountOutcomeSpent(sender, outcomeTarget, newSpent);
-      } else {
-        const newSpent = escrowAccount.subFromSpent(
-          outcomeTarget,
-          entriesToSub
-        );
-        logger.logAccountOutcomeSpent(sender, outcomeTarget, newSpent);
-      }
-
-      toEscrow = escrowAmt;
-    } else {
-      const newSpent = escrowAccount.subFromSpent(
-        outcomeTarget,
-        amountOut - fee
-      );
-      logger.logAccountOutcomeSpent(sender, outcomeTarget, newSpent);
-      toEscrow = 0;
-    }
-
-    const tokensToBurn = amountOut + fee;
-    this.removeFromPools(tokensToBurn);
-
-    logger.logSell(sender, outcomeTarget, sharesIn, amountOut, fee, toEscrow);
-    logger.logPool(this);
-
-    return toEscrow;
+    this.netCollateral += collateralIn;
   }
 
   sell(
     sender: AccountId,
-    amountOut: number,
+    collateralOut: number,
     outcomeTarget: number,
     maxSharesIn: number
   ): number {
     this.assertValidOutcome(outcomeTarget);
     // TODO: this isn't right?
-    const sharesIn = this.calcSellCollateralOut(amountOut, outcomeTarget);
+    const sharesIn = this.calcSellCollateralOut(collateralOut, outcomeTarget);
 
     if (sharesIn - maxSharesIn >= 0.0001) {
       throw new Error(
@@ -726,15 +555,15 @@ export class Pool {
     }
 
     // TODO: redo math and try to fit it into resolutionEscrow... (from upstream)
-    const fee = amountOut * this.swapFee;
+    const fee = collateralOut * this.swapFee;
     const avgPrice = spent / tokenIn.getBalance(sender);
-    const sellPrice = (amountOut + fee) / sharesIn;
+    const sellPrice = (collateralOut + fee) / sharesIn;
 
     // remove the tokens from sender and return to the pool
     tokenIn.safeTransferInternal(sender, this.getOwnAccount(), sharesIn);
     console.log("tokenIn after sale: ", tokenIn);
 
-    this.totalPool += fee;
+    this.accrueFeeToLpHolders(fee);
 
     let toEscrow: number;
     if (sellPrice < avgPrice) {
@@ -746,7 +575,7 @@ export class Pool {
       // TODO: sub from spent and logging is done in both cases, remove dup code
       const newSpent = escrowAccount.subFromSpent(
         outcomeTarget,
-        amountOut + escrowAmt + fee
+        collateralOut + escrowAmt + fee
       );
       logger.logAccountOutcomeSpent(sender, outcomeTarget, newSpent);
       toEscrow = 0;
@@ -755,7 +584,7 @@ export class Pool {
       const escrowAmt = priceDelta * sharesIn;
       const validEscrow = escrowAccount.addToEscrowValid(escrowAmt);
       logger.logToValidEscrow(sender, validEscrow);
-      const entriesToSub = amountOut - escrowAmt + fee;
+      const entriesToSub = collateralOut - escrowAmt + fee;
 
       // TODO: entriesToSub should never be larger than spent
       if (entriesToSub > spent) {
@@ -773,31 +602,28 @@ export class Pool {
     } else {
       const newSpent = escrowAccount.subFromSpent(
         outcomeTarget,
-        amountOut - fee
+        collateralOut - fee
       );
       logger.logAccountOutcomeSpent(sender, outcomeTarget, newSpent);
       toEscrow = 0;
     }
 
-    const tokensToBurn = amountOut + fee;
+    const tokensToBurn = collateralOut + fee;
     this.removeFromPools(tokensToBurn);
 
-    logger.logSell(sender, outcomeTarget, sharesIn, amountOut, fee, toEscrow);
+    logger.logSell(
+      sender,
+      outcomeTarget,
+      sharesIn,
+      collateralOut,
+      fee,
+      toEscrow
+    );
     logger.logPool(this);
 
-    return toEscrow;
-  }
+    this.netCollateral -= collateralOut - toEscrow;
 
-  sellByOutcomeTokens(
-    sender: AccountId,
-    sharesIn: number,
-    outcomeTarget: number
-  ): number {
-    const expectedCollateral = this.calcCollateralReturnedForSellingOutcome(
-      sharesIn,
-      outcomeTarget
-    );
-    return this.sell(sender, expectedCollateral, outcomeTarget, sharesIn);
+    return toEscrow;
   }
 
   payout(
