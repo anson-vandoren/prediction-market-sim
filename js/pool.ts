@@ -13,9 +13,9 @@ export class Pool {
   outcomeTokens: Map<number, MintableFungibleToken>; // map of outcomeId -> Token for each outcome
   poolToken: MintableFungibleToken; // the liquidity pool token
   swapFee: number; // transaction fee associated with buying/selling outcome tokens (between 0-1)
-  weightedShares: Map<AccountId, number>; // pool fees already withdrawn on a per-liquidity-provider basis
-  totalWeightedShares: number; // total of all fees withdrawn by liquidity providers from the pool
-  weightedPool: number; // LP tokens + fees collected, weighted
+  accruedShares: Map<AccountId, number>; // pool fees already withdrawn on a per-liquidity-provider basis
+  accruedPool: number; // total of all fees withdrawn by liquidity providers from the pool
+  totalPool: number; // LP tokens + fees collected, weighted
   resolutionEscrow: ResolutionEscrows; // details about users of this pool
 
   constructor(outcomes: number, swapFee: number) {
@@ -39,9 +39,9 @@ export class Pool {
       ])
     );
     this.poolToken = new MintableFungibleToken(outcomes, 0);
-    this.weightedShares = new Map<AccountId, number>();
-    this.weightedPool = 0;
-    this.totalWeightedShares = 0;
+    this.accruedShares = new Map<AccountId, number>();
+    this.totalPool = 0;
+    this.accruedPool = 0;
     this.resolutionEscrow = new ResolutionEscrows();
     logger.logPool(this);
   }
@@ -325,71 +325,85 @@ export class Pool {
   }
 
   mintPoolTokens(to: AccountId, amount: number): void {
-    this.beforeMintPoolTokens(to, amount);
+    this.updateWeightedShares(to, amount);
     this.poolToken.mint(to, amount);
   }
 
   burnPoolTokensReturnFees(from: AccountId, amount: number): number {
-    const fees = this.beforeBurnPoolTokens(from, amount);
+    console.log(
+      `totalPool: ${this.totalPool}\naccruedPool: ${
+        this.accruedPool
+      }\naccruedShares: ${this.accruedShares.get(from)}`
+    );
+
+    const fees = this.accrueFees(from);
+
+    console.log("***fees withdrawn");
+    console.log(
+      `totalPool: ${this.totalPool}\naccruedPool: ${
+        this.accruedPool
+      }\naccruedShares: ${this.accruedShares.get(from)}`
+    );
+
+    this.updateWeightedShares(from, -amount);
+
+    console.log("***weighted shares updated");
+    console.log(
+      `totalPool: ${this.totalPool}\naccruedPool: ${
+        this.accruedPool
+      }\naccruedShares: ${this.accruedShares.get(from)}`
+    );
+
     this.poolToken.burn(from, amount);
     return fees;
   }
 
   getFeesWithdrawable(accountId: AccountId): number {
-    const totalFees = this.weightedPool * this.accountPoolRatio(accountId);
+    const shareOfTotalWeightedPool =
+      this.totalPool * this.accountLpTokenRatio(accountId);
 
-    const previouslyWithdrawn = this.weightedShares.get(accountId) ?? 0;
+    const previouslyAccrued = this.accruedShares.get(accountId) ?? 0;
     // TODO: this seems like you can join a pool with fees already collected, then
     //       immediately leave and withdraw to keep some of the fees
-    return totalFees - previouslyWithdrawn;
+    return shareOfTotalWeightedPool - previouslyAccrued;
   }
 
-  poolRatio(poolTokens: number): number {
-    const totalSupply = this.poolToken.totalSupply;
+  lpTokenRatio(poolTokens: number): number {
+    const lpBalance = this.poolToken.totalSupply;
     // if there are no pool tokens yet, then any number added would be 100%
-    if (totalSupply === 0) {
+    if (lpBalance === 0) {
       console.error(
         `there were no initial pool tokens, so the ratio of ${poolTokens} is taken to be 100%`
       );
     }
-    return totalSupply ? poolTokens / totalSupply : 1;
+    return lpBalance ? poolTokens / lpBalance : 1;
   }
 
-  beforeMintPoolTokens(to: AccountId, toMint: number): void {
-    const addToPool = this.shareOfPool(toMint);
+  /**
+   * updates the weighted pool shares (LP + fees) when either burning or
+   * minting pool tokens
+   * @param {AccountId} account
+   * @param {number} poolTokens
+   * @returns {number}
+   */
+  updateWeightedShares(account: AccountId, poolTokens: number): void {
+    const deltaShares = this.shareOfPool(poolTokens);
 
-    const prevWeightedShare = this.weightedShares.get(to) ?? 0;
-    let newWeightedShare = prevWeightedShare + addToPool;
-    this.weightedShares.set(to, newWeightedShare);
-
-    logger.logWeightedShares(this.poolToken, to, newWeightedShare);
-
-    this.totalWeightedShares += addToPool;
-    // the fees from this transaction are added to total pool fees collected
-    this.weightedPool += addToPool;
-
-    logger.logPool(this);
-  }
-
-  beforeBurnPoolTokens(from: AccountId, toBurn: number): number {
-    const removeFromPool = this.shareOfPool(toBurn);
-
-    // on transfer or burn pool tokens
-    const prevWeightedShares = this.weightedShares.get(from);
-    if (!prevWeightedShares) {
-      throw new Error(`Cannot transfer/burn pool tokens for ${from}`);
+    const accruedShares = this.accruedShares.get(account) ?? 0;
+    if (poolTokens < 0 && accruedShares === 0) {
+      throw new Error(
+        `Cannot deduct ${accruedShares} for ${account} with zero pool balance`
+      );
     }
-    const newWeightedShares = prevWeightedShares - removeFromPool;
-    this.weightedShares.set(from, newWeightedShares);
 
-    logger.logWeightedShares(this.poolToken, from, newWeightedShares);
+    // add or subtract based on sign of `poolTokens`
+    const newAccruedShares = accruedShares + deltaShares;
+    this.accruedShares.set(account, newAccruedShares);
 
-    this.totalWeightedShares -= removeFromPool;
-    this.weightedPool -= removeFromPool;
+    logger.logWeightedShares(this.poolToken, account, newAccruedShares);
 
-    logger.logPool(this);
-
-    return this.withdrawFees(from);
+    this.accruedPool += deltaShares;
+    this.totalPool += deltaShares;
   }
 
   /**
@@ -401,14 +415,14 @@ export class Pool {
    */
   private shareOfPool(poolTokensTransacted: number) {
     const lpBalance = this.poolToken.totalSupply;
-    const feesToLp = lpBalance === 0 ? 0 : this.weightedPool / lpBalance - 1;
+    const feesToLp = lpBalance === 0 ? 0 : this.totalPool / lpBalance - 1;
 
     return poolTokensTransacted * (1 + feesToLp);
   }
 
-  accountPoolRatio(accountId: AccountId): number {
+  accountLpTokenRatio(accountId: AccountId): number {
     const poolTokens = this.poolToken.getBalance(accountId);
-    return this.poolRatio(poolTokens);
+    return this.lpTokenRatio(poolTokens);
   }
 
   /**
@@ -416,27 +430,21 @@ export class Pool {
    * @param {AccountId} accountId: account that is withdrawing fees
    * @returns {number}: portion of the fees in the pool that belong to `accountId`
    */
-  withdrawFees(accountId: AccountId): number {
-    const poolRatio = this.accountPoolRatio(accountId);
+  accrueFees(accountId: AccountId): number {
+    const lpTokenRatio = this.accountLpTokenRatio(accountId);
 
-    const totalFeesForThisAccount = this.weightedPool * poolRatio;
+    const newWeightedShares = this.totalPool * lpTokenRatio;
 
-    const previouslyWithdrawn = this.weightedShares.get(accountId) ?? 0;
-    const withdrawableAmount = totalFeesForThisAccount - previouslyWithdrawn;
+    const weightedLpThisAcct = this.accruedShares.get(accountId) ?? 0;
+    const shareOfFees = newWeightedShares - weightedLpThisAcct;
 
-    if (withdrawableAmount > 0) {
-      this.weightedShares.set(accountId, totalFeesForThisAccount);
-      this.totalWeightedShares += withdrawableAmount;
-      logger.logWeightedShares(
-        this.poolToken,
-        accountId,
-        totalFeesForThisAccount
-      );
+    if (shareOfFees > 0) {
+      this.accruedShares.set(accountId, newWeightedShares);
+      this.accruedPool += shareOfFees;
+      logger.logWeightedShares(this.poolToken, accountId, newWeightedShares);
     }
 
-    // TODO: this seems like you can join a pool with fees already collected, then
-    //       immediately leave and withdraw to keep some of the fees
-    return withdrawableAmount;
+    return shareOfFees;
   }
 
   /**
@@ -574,7 +582,7 @@ export class Pool {
     const escrowAccount = this.resolutionEscrow.getOrNew(sender);
 
     const fee = amountIn * this.swapFee;
-    this.weightedPool += fee; // TODO: rename feePoolWeight - is it total fees collected, or fees collected that haven't been withdrawn yet?
+    this.totalPool += fee;
 
     const spent = escrowAccount.addToSpent(outcomeTarget, amountIn - fee);
     logger.logAccountOutcomeSpent(sender, outcomeTarget, spent);
@@ -634,7 +642,7 @@ export class Pool {
     // remove the tokens from sender and return to the pool
     tokenIn.safeTransferInternal(sender, this.getOwnAccount(), sharesIn);
 
-    this.weightedPool += fee;
+    this.totalPool += fee;
 
     let toEscrow: number;
     if (sellPrice < avgPrice) {
@@ -726,7 +734,7 @@ export class Pool {
     tokenIn.safeTransferInternal(sender, this.getOwnAccount(), sharesIn);
     console.log("tokenIn after sale: ", tokenIn);
 
-    this.weightedPool += fee;
+    this.totalPool += fee;
 
     let toEscrow: number;
     if (sellPrice < avgPrice) {

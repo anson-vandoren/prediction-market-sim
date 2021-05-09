@@ -140,8 +140,8 @@ function logPool(pool: Pool) {
     params: {
       outcomes: pool.outcomes,
       swapFee: pool.swapFee,
-      totalWeightedShares: pool.totalWeightedShares,
-      weightedPool: pool.weightedPool,
+      totalWeightedShares: pool.accruedPool,
+      weightedPool: pool.totalPool,
     },
   };
   console.info(JSON.stringify(data));
