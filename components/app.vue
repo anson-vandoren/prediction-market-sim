@@ -13,7 +13,10 @@
             :ready-to-payout="readyToPayout"
             :net-collateral="pool.netCollateral"
           ></MarketTable>
-          <MarketControls @on-do-payout="readyToPayout = true"></MarketControls>
+          <MarketControls
+            @on-do-payout="readyToPayout = true"
+            @on-reset-market="resetMarket"
+          ></MarketControls>
         </div>
 
         <div id="rightCol">
@@ -117,6 +120,12 @@ export default defineComponent({
         this.collateralBank[accountId] = 0;
       }
       this.collateralBank[accountId] += amt;
+    },
+    resetMarket() {
+      this.pool = new Pool(2, 0.02);
+      this.collateralBank = { alice: 0 };
+      this.pool.resolutionEscrow.getOrNew("alice");
+      this.updateFromPool();
     },
   },
 });

@@ -1,4 +1,4 @@
-import { MintableFungibleToken, Outcome } from "./tokens";
+import { MintableFungibleToken } from "./tokens";
 import { AccountId } from "./types";
 import { ResolutionEscrows } from "./resolutionEscrow";
 import { newtonRaphson } from "@fvictorio/newton-raphson-method";
@@ -15,7 +15,7 @@ export class Pool {
   swapFee: number; // transaction fee associated with buying/selling outcome tokens (between 0-1)
   resolutionEscrow: ResolutionEscrows; // details about users of this pool
   accruedFees: Map<AccountId, number>; // pool fees accrued by each active account
-  netCollateral: number;
+  netCollateral: number; // total collateral currently held in the pool
 
   constructor(outcomes: number, swapFee: number) {
     // bounds-check outcomes
@@ -663,11 +663,10 @@ export class Pool {
       const bal =
         existingBalances[outcomeIdx] + outcomeTokensFromLpTokens[outcomeIdx];
       const payout = bal * num;
-      console.log(`paying out ${payout} for outcome ${outcomeIdx}`);
       return ac + payout;
     }, 0);
     payout += this.resolutionEscrow.get(accountId)?.valid ?? 0;
-    return payout + feesEarned;
+    return Math.round(100 * (payout + feesEarned)) / 100;
   }
 
   getOutcomesFromLp(accountId: AccountId, toExit: number): number[] {
@@ -681,10 +680,9 @@ export class Pool {
       );
     }
 
-    const createdOutcomes = balances.map(
+    return balances.map(
       (outcomeBalance, outcomeIdx) => (toExit / totalSupply) * outcomeBalance
     );
-    return createdOutcomes;
   }
 
   /**

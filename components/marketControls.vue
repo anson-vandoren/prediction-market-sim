@@ -24,18 +24,13 @@
             <div class="px-4 py-5 bg-white">
               <div class="grid grid-cols-6 gap-6">
                 <div class="col-span-3">
-                  <label
-                    for="newFundingAmt"
-                    class="block text-sm font-medium text-gray-700"
-                    >Funding Amount</label
+                  <button
+                    type="button"
+                    @click="$emit('on-reset-market')"
+                    class="py-2 px-4 justify-self-auto mt-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                   >
-                  <input
-                    type="text"
-                    name="newFundingAmt"
-                    id="newFundingAmt"
-                    value="10"
-                    class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"
-                  />
+                    Reset Market
+                  </button>
                 </div>
                 <div class="col-span-3 place-self-center">
                   <button
@@ -44,7 +39,7 @@
                     @click="$emit('on-do-payout')"
                     class="py-2 px-4 justify-self-auto mt-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                   >
-                    Reset Market
+                    Calculate Payout
                   </button>
                 </div>
               </div>
@@ -66,9 +61,6 @@
 import { defineComponent } from "vue";
 
 export default defineComponent({
-  emits: ["on-do-payout"],
-  data() {
-    return {};
-  },
+  emits: ["on-do-payout", "on-reset-market"],
 });
 </script>
