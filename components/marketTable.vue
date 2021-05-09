@@ -145,7 +145,7 @@ export default defineComponent({
         return account.accountId
           ? {
               accountId: account.accountId,
-              payout: this.pool.payout(account.accountId, [1, 0], true),
+              payout: this.pool.returnedOnPayout(account.accountId, [1, 0]),
             }
           : {};
       });
@@ -153,7 +153,7 @@ export default defineComponent({
         return account.accountId
           ? {
               accountId: account.accountId,
-              payout: this.pool.payout(account.accountId, [0, 1], false),
+              payout: this.pool.returnedOnPayout(account.accountId, [0, 1]),
             }
           : {};
       });

@@ -1,4 +1,4 @@
-import { MintableFungibleToken } from "./tokens";
+import { MintableFungibleToken, Outcome } from "./tokens";
 import { AccountId } from "./types";
 import { ResolutionEscrows } from "./resolutionEscrow";
 import { newtonRaphson } from "@fvictorio/newton-raphson-method";
@@ -221,20 +221,20 @@ export class Pool {
     });
   }
 
-  exitPool(sender: AccountId, poolTokensToExit: number): number {
+  exitPool(sender: AccountId, toExit: number): number {
     const balances = this.getOutcomeBalances();
-    const poolTokenSupply = this.poolToken.totalSupply;
-    const senderPoolTokenBalance = this.poolToken.getBalance(sender);
+    const totalSupply = this.poolToken.totalSupply;
+    const senderBalance = this.poolToken.getBalance(sender);
 
-    if (poolTokensToExit > senderPoolTokenBalance) {
+    if (toExit > senderBalance) {
       throw new Error(
-        `cannot exit pool for ${poolTokensToExit}, only have ${senderPoolTokenBalance}`
+        `cannot exit pool for ${toExit}, only have ${senderBalance}`
       );
     }
 
     const escrowAccount = this.resolutionEscrow.getOrFail(sender);
 
-    const lpTokenExitRatio = poolTokensToExit / senderPoolTokenBalance; // fraction of this account's tokens to exit
+    const lpTokenExitRatio = toExit / senderBalance; // fraction of this account's tokens to exit
 
     balances.forEach((outcomeBalance: number, outcomeIdx: number) => {
       // amount of collateral spent on liquidity tokens
@@ -244,12 +244,7 @@ export class Pool {
       // since liquidity tokens are being converted to outcome tokens, update for collateral spent on outcome tokens
       escrowAccount.lpOnExit(outcomeIdx, spentOnExitShares);
 
-      // TODO: just before resolution, is it possible to add a bunch of liquidity, assuming there is
-      //       a non-negligible of the expected winning outcome left, to receive the majority
-      //       of the remaining winning outcome tokens?
-      //       A: probably not, because $1 doesn't get 1 LP token (although $1 should get some of the
-      //       winning outcome token when provided as liquidity)
-      const sendOut = (poolTokensToExit / poolTokenSupply) * outcomeBalance;
+      const sendOut = (toExit / totalSupply) * outcomeBalance;
 
       // transfer the outcome token to the user in return for their liquidity tokens
       const token = this.outcomeTokens.get(outcomeIdx);
@@ -258,10 +253,7 @@ export class Pool {
     });
 
     // burn liquidity tokens that are exited
-    const feesReturned = this.burnPoolTokensReturnFees(
-      sender,
-      poolTokensToExit
-    );
+    const feesReturned = this.burnPoolTokensReturnFees(sender, toExit);
     this.netCollateral -= feesReturned;
     return feesReturned;
   }
@@ -626,18 +618,12 @@ export class Pool {
     return toEscrow;
   }
 
-  payout(
-    accountId: AccountId,
-    payoutNumerators?: number[],
-    testRun: Boolean = false
-  ): number {
+  payout(accountId: AccountId, payoutNumerators?: number[]): number {
     const poolTokenBalance = this.getPoolTokenBalance(accountId);
     const feesEarned =
       poolTokenBalance > 0 ? this.exitPool(accountId, poolTokenBalance) : 0;
 
-    const balances = testRun
-      ? this.getAccountBalances(accountId)
-      : this.getAndClearBalances(accountId);
+    const balances = this.getAndClearBalances(accountId);
     const escrowAccount = this.resolutionEscrow.get(accountId);
     if (!escrowAccount) {
       return 0;
@@ -660,11 +646,45 @@ export class Pool {
         }) + escrowAccount.invalid;
     }
 
-    if (!testRun) {
-      this.resolutionEscrow.remove(accountId);
-    }
+    this.resolutionEscrow.remove(accountId);
 
     return payout + feesEarned;
+  }
+
+  returnedOnPayout(accountId: AccountId, payoutNumerators: number[]) {
+    const poolTokenBalance = this.getPoolTokenBalance(accountId);
+    const feesEarned = this.accruedFees.get(accountId) ?? 0;
+    const outcomeTokensFromLpTokens = this.getOutcomesFromLp(
+      accountId,
+      poolTokenBalance
+    );
+    const existingBalances = this.getAccountBalances(accountId);
+    let payout = payoutNumerators.reduce((ac, num, outcomeIdx) => {
+      const bal =
+        existingBalances[outcomeIdx] + outcomeTokensFromLpTokens[outcomeIdx];
+      const payout = bal * num;
+      console.log(`paying out ${payout} for outcome ${outcomeIdx}`);
+      return ac + payout;
+    }, 0);
+    payout += this.resolutionEscrow.get(accountId)?.valid ?? 0;
+    return payout + feesEarned;
+  }
+
+  getOutcomesFromLp(accountId: AccountId, toExit: number): number[] {
+    const balances = this.getOutcomeBalances();
+    const totalSupply = this.poolToken.totalSupply;
+    const senderBalance = this.poolToken.getBalance(accountId);
+
+    if (toExit > senderBalance) {
+      throw new Error(
+        `cannot exit pool for ${toExit}, only have ${senderBalance}`
+      );
+    }
+
+    const createdOutcomes = balances.map(
+      (outcomeBalance, outcomeIdx) => (toExit / totalSupply) * outcomeBalance
+    );
+    return createdOutcomes;
   }
 
   /**
