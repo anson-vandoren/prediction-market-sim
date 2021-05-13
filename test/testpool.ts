@@ -252,13 +252,13 @@ describe("addLiquidity", () => {
   it("fails if insufficient liquidity provided", () => {
     const pool = new Pool(2, 0);
     expect(() =>
-      pool.addLiquidity("alice", pool.minLiquidityAmount() - 0.0001)
+      pool.addLiquidity("alice", pool.MIN_LIQUIDITY_AMOUNT - 0.0001)
     ).to.throw(RangeError);
   });
   it("fails if no weights given for new pool", () => {
     const pool = new Pool(3, 0);
     expect(() =>
-      pool.addLiquidity("alice", pool.minLiquidityAmount())
+      pool.addLiquidity("alice", pool.MIN_LIQUIDITY_AMOUNT)
     ).to.throw("must provide weights");
   });
   it("fails if weights do not match outcome number", () => {
@@ -268,7 +268,7 @@ describe("addLiquidity", () => {
     expect(weightsToGive.length).to.be.lessThanOrEqual(MAX_OUTCOMES);
     const pool = new Pool(numOutcomes, 0);
     expect(() =>
-      pool.addLiquidity("alice", pool.minLiquidityAmount(), weightsToGive)
+      pool.addLiquidity("alice", pool.MIN_LIQUIDITY_AMOUNT, weightsToGive)
     ).to.throw("invalid weights");
   });
   it("fails if weights are given to established pool", () => {

@@ -16,6 +16,7 @@ export class Pool {
   resolutionEscrow: ResolutionEscrows; // details about users of this pool
   accruedFees: Map<AccountId, number>; // pool fees accrued by each active account
   netCollateral: number; // total collateral currently held in the pool
+  readonly MIN_LIQUIDITY_AMOUNT = 0.01;
 
   constructor(outcomes: number, swapFee: number) {
     // bounds-check outcomes
@@ -101,7 +102,7 @@ export class Pool {
     collateralIn: number,
     weights?: number[]
   ): void {
-    if (collateralIn < this.minLiquidityAmount()) {
+    if (collateralIn < this.MIN_LIQUIDITY_AMOUNT) {
       throw new RangeError("INVALID_LIQUIDITY_AMT");
     }
     const isNewPool = this.poolToken.totalSupply === 0;
@@ -697,10 +698,6 @@ export class Pool {
     this.outcomeTokens.forEach((token) => {
       token.burn(this.getOwnAccount(), amount);
     });
-  }
-
-  minLiquidityAmount(): number {
-    return 0.01;
   }
 
   /**
